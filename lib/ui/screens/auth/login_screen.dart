@@ -35,6 +35,7 @@ import '../../navigation/destinations.dart';
 import '../../widgets/allow_self_signed_dialog.dart';
 import '../../widgets/client_certificate_dialog.dart';
 import '../../widgets/login_scaffold.dart';
+import '../../widgets/oidc_sign_in_buttons.dart';
 import '../../widgets/pin_entry_dialog.dart';
 import '../../widgets/sign_in_qr_code.dart';
 import 'silo_password_change_dialog.dart';
@@ -945,6 +946,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ).textTheme.bodySmall?.copyWith(color: _loginForeground(0.5)),
               ),
               const SizedBox(height: 24),
+              OidcSignInButtons(server: _server!),
               if (_supportsQuickConnect) ...[
                 _buildToggleRow(),
                 const SizedBox(height: 24),
