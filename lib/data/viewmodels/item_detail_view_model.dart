@@ -21,6 +21,7 @@ import '../repositories/mdblist_repository.dart';
 import '../repositories/tmdb_repository.dart';
 import '../repositories/seerr_repository.dart';
 import '../utils/blocked_ratings.dart';
+import '../utils/episode_cast_utils.dart';
 import '../utils/playlist_utils.dart';
 import '../../preference/seerr_preferences.dart';
 import '../../util/episode_playability.dart';
@@ -404,6 +405,10 @@ class ItemDetailViewModel extends ChangeNotifier {
   AggregatedItem? _nextUp;
   AggregatedItem? get nextUp => _nextUp;
 
+  /// Counts Next Up requests, so an older answer that arrives late can't
+  /// replace the one a refresh asked for after it.
+  int _nextUpRequest = 0;
+
   Map<String, double> _ratings = const {};
   Map<String, double> get ratings => _ratings;
 
@@ -554,18 +559,14 @@ class ItemDetailViewModel extends ChangeNotifier {
   bool get supportsNumericUserRatings =>
       _client.userLibraryApi.supportsNumericUserRatings;
 
-  /// Plex has no likes, and its own rating already stands in for favorites.
-  bool get supportsPersonalRating => _client.serverType != ServerType.plex;
+  bool get supportsPersonalRating => _client.features.supportsPersonalRatings;
 
-  /// Plex can only favorite media, never people, and Silo keeps no person
-  /// favorites.
-  bool get supportsPersonFavorites =>
-      _client.serverType != ServerType.plex &&
-      _client.serverType != ServerType.silo;
+  bool get supportsPersonFavorites => _client.features.supportsPersonFavorites;
 
   /// Plex keeps no YouTube links, so a trailer it doesn't have is searched
   /// for on YouTube instead.
-  bool get searchesYouTubeForTrailer => _client.serverType == ServerType.plex;
+  bool get searchesYouTubeForTrailer =>
+      !_client.features.supportsRemoteTrailers;
 
   /// Whether this collection's cards offer "Remove from collection". A
   /// server can limit editing to some collections (Silo: the profile's own
@@ -598,6 +599,18 @@ class ItemDetailViewModel extends ChangeNotifier {
   /// lands, and null forever when Seerr is off or doesn't know the title.
   SeerrMediaDetailViewModel? _seerr;
   SeerrMediaDetailViewModel? get seerr => _seerr;
+
+  /// Longest the action row waits on its late inputs. Long enough for the
+  /// server's own lookups, short enough that the row still feels instant. A
+  /// slower Seerr answer adds its buttons when it lands.
+  static const actionsWaitCap = Duration(milliseconds: 250);
+
+  /// Whether everything that adds, removes or relabels an action button has
+  /// come back (or [actionsWaitCap] ran out), so the row can show complete
+  /// rather than gaining a button a moment later. Stays true for reloads of
+  /// the same item, so switching version doesn't hide the row again.
+  bool _actionsSettled = false;
+  bool get actionsSettled => _actionsSettled;
 
   /// Whether this screen stands in for a title that is not in the library, in
   /// which case there is nothing to play, mark watched or download.
@@ -750,8 +763,15 @@ class ItemDetailViewModel extends ChangeNotifier {
     }
     final nextUp = userDataSync.applyOrNull(_nextUp);
     if (!identical(nextUp, _nextUp)) {
+      final justPlayed =
+          _nextUp?.isPlayed == false && nextUp?.isPlayed == true;
       _nextUp = nextUp;
       changed = true;
+      // A played mark only lands here once the server has it, so the next
+      // episode can be fetched right away, even when marked from this page.
+      if (justPlayed && !_syncingUserData && _item?.type == 'Series') {
+        unawaited(_loadNextUp());
+      }
     }
 
     List<AggregatedItem> patch(List<AggregatedItem> list) {
@@ -816,6 +836,9 @@ class ItemDetailViewModel extends ChangeNotifier {
       _syncingUserData = false;
       _userDataStale = false;
     }
+    // A change to an episode's watched state can move the series on, and
+    // only the server knows which episode comes next.
+    if (!_isDisposed && _item?.type == 'Series') await _loadNextUp();
   }
 
   /// Builds the screen for a title that is not in the library at all, out of
@@ -855,6 +878,7 @@ class ItemDetailViewModel extends ChangeNotifier {
     _seasons = _seerrSeasons(state);
     _seasonsLoaded = true;
     _state = ItemDetailState.ready;
+    _actionsSettled = true;
     notifyListeners();
 
     // Everything else in _loadSecondary needs a library id, but ratings and
@@ -929,6 +953,8 @@ class ItemDetailViewModel extends ChangeNotifier {
   Future<void> load({String? mediaSourceId}) async {
     _similarInitialLoadComplete = false;
     _state = ItemDetailState.loading;
+    _castLoadGeneration++;
+    _parentActors = const [];
     _collectionItems = const [];
     _missingCollectionItems = const [];
     _parentCollections = const [];
@@ -1147,47 +1173,58 @@ class ItemDetailViewModel extends ChangeNotifier {
   Future<void> _loadSecondary() async {
     final type = _item?.type;
     final futures = <Future>[];
-    unawaited(_loadProbedMediaSources());
+    // The loads that change which action buttons show or what they say. Only
+    // quick ones belong here: parent collections stay out, since finding them
+    // can mean scanning every collection in the library.
+    final actionInputs = <Future>[];
+    Future<void> forActions(Future<void> load) {
+      actionInputs.add(load);
+      return load;
+    }
+
+    unawaited(forActions(_loadProbedMediaSources()));
     // Deliberately outside the Future.wait below, so a slow Seerr server never
     // holds up library content that is already here.
-    unawaited(_loadSeerrOverlay());
+    unawaited(forActions(_loadSeerrOverlay()));
     if (type == 'Person') {
       futures.add(_loadFilmography());
-      futures.add(_loadPersonAccounts());
+      futures.add(forActions(_loadPersonAccounts()));
     } else if (type == 'Series') {
       unawaited(_loadReviews());
       unawaited(_syncSeriesTrackChoices());
       futures.add(_loadRatings());
-      futures.add(_loadSeasons());
-      futures.add(_loadNextUp());
+      futures.add(forActions(_loadSeasons()));
+      futures.add(forActions(_loadNextUp()));
       futures.add(_loadSimilar());
-      futures.add(_loadFeatures());
+      futures.add(forActions(_loadFeatures()));
       futures.add(_loadParentCollection());
       unawaited(_loadUpcomingEpisode());
     } else if (type == 'Season') {
       unawaited(_syncSeriesTrackChoices());
       futures.add(_loadRatings());
-      futures.add(_loadEpisodes());
-      futures.add(_loadFeatures());
+      futures.add(forActions(_loadEpisodes()));
+      futures.add(_loadSeasonCast());
+      futures.add(forActions(_loadFeatures()));
     } else if (type == 'Episode') {
       unawaited(_syncSeriesTrackChoices());
       futures.add(_loadRatings());
       futures.add(_loadEpisodes());
+      futures.add(_loadParentCast());
       futures.add(_loadSimilar());
-      futures.add(_loadFeatures());
+      futures.add(forActions(_loadFeatures()));
     } else if (type == 'MusicArtist') {
-      futures.add(_loadAlbums());
-      futures.add(_loadTracks(artistId: itemId));
+      futures.add(forActions(_loadAlbums()));
+      futures.add(forActions(_loadTracks(artistId: itemId)));
       futures.add(_loadSimilar());
     } else if (type == 'MusicAlbum' || type == 'Playlist') {
-      futures.add(_loadTracks());
+      futures.add(forActions(_loadTracks()));
     } else if (type == 'AudioBook') {
       futures.add(_loadRatings());
       futures.add(_loadSimilar());
     } else if (type == 'Audio') {
       futures.add(_loadLyrics());
     } else if (type == 'BoxSet') {
-      futures.add(_loadCollectionItems());
+      futures.add(forActions(_loadCollectionItems()));
       // Deliberately not awaited, so a slow Seerr server never holds the
       // collection's own members back.
       unawaited(_loadBoxSetSeerrItems());
@@ -1198,7 +1235,7 @@ class ItemDetailViewModel extends ChangeNotifier {
         type == 'Video') {
       futures.add(_loadRatings());
       futures.add(_loadSimilar());
-      futures.add(_loadFeatures());
+      futures.add(forActions(_loadFeatures()));
       if (type != 'MusicVideo') {
         futures.add(_loadParentCollection());
       }
@@ -1207,7 +1244,23 @@ class ItemDetailViewModel extends ChangeNotifier {
       futures.add(_loadRatings());
       futures.add(_loadSimilar());
     }
+    unawaited(_settleActions(actionInputs));
     await Future.wait(futures);
+  }
+
+  Future<void> _settleActions(List<Future> inputs) async {
+    if (!_actionsSettled) {
+      // Each input swallows its own error: Future.wait gives up on the first
+      // one, which would show the row before the slower inputs are back.
+      try {
+        await Future.wait(
+          inputs.map((f) => f.catchError((_) {})),
+        ).timeout(actionsWaitCap);
+      } catch (_) {}
+    }
+    if (_isDisposed || _actionsSettled) return;
+    _actionsSettled = true;
+    notifyListeners();
   }
 
   Future<void> _loadSeasons() async {
@@ -1307,8 +1360,44 @@ class ItemDetailViewModel extends ChangeNotifier {
     return loadAllSeriesEpisodes();
   }
 
+  int _castLoadGeneration = 0;
+  List<Map<String, dynamic>> _parentActors = const [];
+  List<Map<String, dynamic>> get parentActors => _parentActors;
+
+  Future<void> _loadParentCast() async {
+    final item = _item;
+    if (item == null) return;
+    final generation = ++_castLoadGeneration;
+    final actors = await resolveParentCast(
+      client: _client,
+      seasonId: item.seasonId,
+      seriesId: item.seriesId,
+    );
+    if (_isDisposed || generation != _castLoadGeneration || actors.isEmpty) return;
+    _parentActors = actors;
+    notifyListeners();
+  }
+
+  Future<void> _loadSeasonCast() async {
+    final item = _item;
+    if (item == null) return;
+    final hasActors = item.people.any((p) {
+      final t = p['Type'] as String?;
+      return t == 'Actor' || t == 'GuestStar';
+    });
+    if (hasActors) return;
+    final generation = ++_castLoadGeneration;
+    final actors = await resolveParentCast(
+      client: _client,
+      seriesId: item.seriesId,
+    );
+    if (_isDisposed || generation != _castLoadGeneration || actors.isEmpty) return;
+    _parentActors = actors;
+    notifyListeners();
+  }
+
   Future<void> _loadNextUp() async {
-    final previousId = _nextUp?.id;
+    final request = ++_nextUpRequest;
     AggregatedItem? nextUp;
     try {
       final data = await _client.itemsApi.getNextUp(
@@ -1328,8 +1417,13 @@ class ItemDetailViewModel extends ChangeNotifier {
           nextUp = candidate;
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      // A failed refresh keeps the Next Up already shown.
+      return;
+    }
 
+    if (_isDisposed || request != _nextUpRequest) return;
+    final previousId = _nextUp?.id;
     _nextUp = nextUp;
     if (previousId != _nextUp?.id) {
       notifyListeners();
@@ -2799,12 +2893,47 @@ class ItemDetailViewModel extends ChangeNotifier {
     } catch (_) {}
   }
 
+  List<Map<String, dynamic>>? _cachedEpisodeDirectors;
+  List<Map<String, dynamic>>? _cachedEpisodeWriters;
+  AggregatedItem? _cachedEpisodeCrewItem;
+
+  void _ensureEpisodeCrew() {
+    if (identical(_cachedEpisodeCrewItem, _item)) return;
+    _cachedEpisodeCrewItem = _item;
+    final item = _item;
+    if (item?.type != 'Episode') {
+      _cachedEpisodeDirectors = null;
+      _cachedEpisodeWriters = null;
+      return;
+    }
+    final l10n = currentAppLocalizations();
+    _cachedEpisodeDirectors = item!.people
+        .where((p) => p['Type'] == 'Director')
+        .map((p) => <String, dynamic>{
+              ...p,
+              'Role': formatEpisodeDirectorRole(l10n, p['Role']?.toString()),
+            })
+        .toList(growable: false);
+    _cachedEpisodeWriters = item.people
+        .where((p) => p['Type'] == 'Writer')
+        .map((p) => <String, dynamic>{
+              ...p,
+              'Role': formatEpisodeWriterRole(l10n, p['Role']?.toString()),
+            })
+        .toList(growable: false);
+  }
+
   List<Map<String, dynamic>> get directors {
     if (_item?.type == 'BoxSet') {
       _ensureBoxSetPeople();
       return _boxSetDirectors;
     }
-    return _item?.people.where((p) => p['Type'] == 'Director').toList() ?? const [];
+    final list = _item?.people.where((p) => p['Type'] == 'Director').toList() ?? const [];
+    if (_item?.type == 'Episode') {
+      _ensureEpisodeCrew();
+      return _cachedEpisodeDirectors ?? list;
+    }
+    return list;
   }
 
   List<Map<String, dynamic>> get writers {
@@ -2812,7 +2941,12 @@ class ItemDetailViewModel extends ChangeNotifier {
       _ensureBoxSetPeople();
       return _boxSetWriters;
     }
-    return _item?.people.where((p) => p['Type'] == 'Writer').toList() ?? const [];
+    final list = _item?.people.where((p) => p['Type'] == 'Writer').toList() ?? const [];
+    if (_item?.type == 'Episode') {
+      _ensureEpisodeCrew();
+      return _cachedEpisodeWriters ?? list;
+    }
+    return list;
   }
 
   List<Map<String, dynamic>> get actors {
@@ -2823,13 +2957,26 @@ class ItemDetailViewModel extends ChangeNotifier {
     final list = _item?.people ?? const [];
     final dirNames = directors.map((d) => d['Name'] as String?).toSet();
     final writNames = writers.map((w) => w['Name'] as String?).toSet();
-    return list.where((p) {
+    final rawActors = list.where((p) {
       final type = p['Type'] as String?;
       if (type != 'Actor' && type != 'GuestStar') return false;
       final name = p['Name'] as String?;
       if (dirNames.contains(name) || writNames.contains(name)) return false;
       return true;
     }).toList();
+
+    if (_item?.type == 'Episode') {
+      return mergeEpisodeCast(
+        episodeActors: rawActors,
+        parentActors: _parentActors,
+      );
+    }
+
+    if (_item?.type == 'Season' && rawActors.isEmpty) {
+      return _parentActors;
+    }
+
+    return rawActors;
   }
 
   List<AggregatedItem> get filmographyMovies =>

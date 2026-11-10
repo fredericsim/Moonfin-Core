@@ -62,7 +62,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get signIn => 'Iniciar sesión';
 
   @override
-  String get signingIn => 'Signing in...';
+  String get signingIn => 'Iniciando sesión...';
 
   @override
   String get empty => 'Vacío';
@@ -147,31 +147,31 @@ class AppLocalizationsEs extends AppLocalizations {
   String get whosWatching => '¿Quién está viendo?';
 
   @override
-  String get signedInOnThisDevice => 'Signed in on this device';
+  String get signedInOnThisDevice => 'Sesión iniciada en este dispositivo';
 
   @override
-  String get pinRequired => 'PIN required';
+  String get pinRequired => 'Se requiere PIN';
 
   @override
-  String get passwordRequired => 'Password required';
+  String get passwordRequired => 'Se requiere Contraseña';
 
   @override
   String continueAsUser(String name) {
-    return 'Continue as $name';
+    return 'Continuar como $name';
   }
 
   @override
   String switchToUser(String name) {
-    return 'Switch to $name';
+    return 'Cambiar a $name';
   }
 
   @override
   String signedInAsOnServer(String user, String server) {
-    return 'Signed in as $user on $server';
+    return 'Sesión iniciada como $user en $server';
   }
 
   @override
-  String get accountActive => 'Active';
+  String get accountActive => 'Activo';
 
   @override
   String get addUser => 'Añadir usuario';
@@ -246,7 +246,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get detailScreenStyleSubtitle =>
-      'Clásico es el diseño centrado original de moonfin. Moderno es un diseño cinematográfico adaptable. Foco es un diseño que pone la imagen principal en el primer plano, con tarjetas de contenido emergentes. Nuevo es un diseño a pantalla completa, con secciones apiladas verticalmente a lo largo de la página. Minimalista muestra la ilustración, un botón de reproducción y los episodios.';
+      'El aspecto que tiene una película o serie al abrirla.';
 
   @override
   String get detailScreenStyleMoonfin => 'Clásico';
@@ -468,26 +468,26 @@ class AppLocalizationsEs extends AppLocalizations {
   String get detailScreenStyleMinimalist => 'Minimalista';
 
   @override
-  String get detailScreenStyleStage => 'Stage';
+  String get detailScreenStyleStage => 'Escenario';
 
   @override
-  String get detailScreenStylePremiere => 'Premiere';
+  String get detailScreenStylePremiere => 'Estreno';
 
   @override
-  String get detailScreenStyleQuickLook => 'Quick Look';
+  String get detailScreenStyleQuickLook => 'Vistazo rápido';
 
   @override
-  String get detailScreenStyleFrost => 'Frost';
+  String get detailScreenStyleFrost => 'Helado';
 
   @override
-  String get quickLookOpenFullPage => 'Open full page';
+  String get quickLookOpenFullPage => 'Abrir página completa';
 
   @override
-  String get quickLookBackToClose => 'Back to close';
+  String get quickLookBackToClose => 'Volver a cerrar';
 
   @override
   String quickLookSeasonPlayed(int played, int total) {
-    return '$played of $total';
+    return '$played de $total';
   }
 
   @override
@@ -1606,7 +1606,7 @@ class AppLocalizationsEs extends AppLocalizations {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
-      other: '$count more queued',
+      other: '$count mas queued',
       one: '1 more queued',
     );
     return '$_temp0';
@@ -1713,7 +1713,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get audioTrack => 'Pista de audio';
 
   @override
-  String get noOtherAudioTracks => 'No other audio tracks';
+  String get noOtherAudioTracks => 'No hay otras pistas de audio';
 
   @override
   String get subtitleTrack => 'Pista de subtítulos';
@@ -1864,6 +1864,30 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get writers => 'GUIONISTAS';
+
+  @override
+  String get episodeDirector => 'Episode Director';
+
+  @override
+  String episodeDirectorWithRole(String role) {
+    return '$role (Episode Director)';
+  }
+
+  @override
+  String get episodeWriter => 'Episode Writer';
+
+  @override
+  String episodeWriterWithRole(String role) {
+    return '$role (Episode Writer)';
+  }
+
+  @override
+  String get guestStar => 'Guest Star';
+
+  @override
+  String guestStarWithRole(String role) {
+    return '$role (Guest Star)';
+  }
 
   @override
   String get studio => 'ESTUDIO';
@@ -2675,26 +2699,26 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get seriesRecordingNewEpisodesOnlyDescription =>
-      'First airings only, no repeats';
+      'Solo emisiones iniciales, sin repeticiones';
 
   @override
-  String get seriesRecordingSettings => 'Series Settings';
+  String get seriesRecordingSettings => 'Configuración de la serie';
 
   @override
-  String get seriesRecordingUpdated => 'Series recording updated';
+  String get seriesRecordingUpdated => 'Grabación de serie actualizada';
 
   @override
   String get failedToUpdateSeriesRecording =>
-      'Unable to update series recording';
+      'No es posible actualizar la grabación de la serie';
 
   @override
-  String get recordCurrentEpisode => 'Record This Episode';
+  String get recordCurrentEpisode => 'Grabar este episodio';
 
   @override
-  String get recordCurrentProgram => 'Record This Program';
+  String get recordCurrentProgram => 'Grabar este programa';
 
   @override
-  String get cancelCurrentRecording => 'Cancel This Recording';
+  String get cancelCurrentRecording => 'Cancelar esta grabación';
 
   @override
   String get cancelRecordingAction => 'Cancelar grabación';
@@ -2709,23 +2733,23 @@ class AppLocalizationsEs extends AppLocalizations {
   String get unableToCreateRecording => 'No se puede crear la grabación';
 
   @override
-  String get recordSeries => 'Record Series';
+  String get recordSeries => 'Grabar serie';
 
   @override
-  String get seriesSetToRecord => 'Series set to record';
+  String get seriesSetToRecord => 'Series programadas para grabar';
 
   @override
-  String get seriesRecordingCancelled => 'Series recording cancelled';
+  String get seriesRecordingCancelled => 'Grabación de la serie cancelada';
 
   @override
   String get unableToCreateSeriesRecording =>
-      'Unable to create series recording';
+      'No es posible crear una grabación de serie';
 
   @override
   String get watch => 'Ver';
 
   @override
-  String get watchChannelLive => 'Watch channel live';
+  String get watchChannelLive => 'Ver el canal en directo';
 
   @override
   String get close => 'Cerrar';
@@ -2737,20 +2761,20 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get playbackStreamLost =>
-      'Playback stopped and could not be recovered.';
+      'La reproducción se detuvo y no pudo reanudarse.';
 
   @override
   String get playbackVideoUnsupported =>
-      'This device can\'t play this video\'s format. Try an external player.';
+      'Este dispositivo no puede reproducir el formato de este video. Prueba con un reproductor externo.';
 
   @override
   String liveReconnecting(int attempt, int total) {
-    return 'Reconnecting… ($attempt of $total)';
+    return 'Reconectando… ($attempt de $total)';
   }
 
   @override
   String playerMatchingDisplayRate(String fps) {
-    return 'Matching display to $fps fps…';
+    return 'Ajustando la pantalla a $fps fps…';
   }
 
   @override
@@ -2971,7 +2995,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get downloadedItems => 'Elementos descargados';
 
   @override
-  String get activeDownloads => 'Active Downloads';
+  String get activeDownloads => 'Descargas activas';
 
   @override
   String savedMediaCount(int count) {
@@ -2986,37 +3010,39 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String savedMediaOfLimit(String used, String limit) {
-    return '$used of $limit';
+    return '$used de $limit';
   }
 
   @override
-  String get savedMediaSelectItems => 'Select items';
+  String get savedMediaSelectItems => 'Seleccionar elementos';
 
   @override
-  String get savedMediaNoDownloads => 'Nothing saved yet';
+  String get savedMediaNoDownloads => 'Aún no hay nada guardado';
 
   @override
   String get savedMediaNoDownloadsDetail =>
-      'Downloads you start appear here and play without a connection.';
+      'Las descargas que inicias aparecen aquí y se pueden reproducir sin conexión.';
 
   @override
-  String get savedMediaNoActiveDownloads => 'Nothing downloading right now';
+  String get savedMediaNoActiveDownloads =>
+      'No se está descargando nada en este momento';
 
   @override
-  String get savedMediaNoResults => 'No downloads match that search';
+  String get savedMediaNoResults =>
+      'No hay descargas que coincidan con esa búsqueda';
 
   @override
-  String get savedMediaPlayFromStart => 'Play from start';
+  String get savedMediaPlayFromStart => 'Reproducir desde el principio';
 
   @override
-  String get savedMediaGoToDetails => 'Go to details';
+  String get savedMediaGoToDetails => 'Ir a Detalles';
 
   @override
-  String get savedMediaDeleteDownload => 'Delete download';
+  String get savedMediaDeleteDownload => 'Eliminar Descarga';
 
   @override
   String savedMediaDeleteSeason(String season) {
-    return 'Delete $season';
+    return 'Eliminar $season';
   }
 
   @override
@@ -3031,25 +3057,25 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get savedMediaOpenShow => 'Open show';
+  String get savedMediaOpenShow => 'Abrir programa';
 
   @override
-  String get savedMediaPlayNextUnwatched => 'Play next unwatched';
+  String get savedMediaPlayNextUnwatched => 'Reproducir siguiente no visto';
 
   @override
-  String get savedMediaRead => 'Read';
+  String get savedMediaRead => 'Leer';
 
   @override
-  String get savedMediaCancelDownload => 'Cancel download';
+  String get savedMediaCancelDownload => 'Cancelar descarga';
 
   @override
-  String get sortBySize => 'Size';
+  String get sortBySize => 'Tamaño';
 
   @override
-  String get sortByName => 'Name';
+  String get sortByName => 'Nombre';
 
   @override
-  String get sortByDateAdded => 'Date added';
+  String get sortByDateAdded => 'Fecha añadida';
 
   @override
   String get storageLimit => 'Límite de almacenamiento';
@@ -3093,7 +3119,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get settings => 'Ajustes';
 
   @override
-  String get settingsSearchHint => 'Search settings';
+  String get settingsSearchHint => 'Configuración de búsqueda';
 
   @override
   String get authentication => 'Autenticación';
@@ -3182,17 +3208,17 @@ class AppLocalizationsEs extends AppLocalizations {
   String get watchedIndicators => 'Indicadores de visto';
 
   @override
-  String get showPosterLabels => 'Poster Labels';
+  String get showPosterLabels => 'Etiquetas para carteles';
 
   @override
   String get showPosterLabelsSubtitle =>
-      'Show the labels on posters, such as 4K or HDR.';
+      'Muestra las etiquetas en los carteles, como 4K o HDR.';
 
   @override
   String get always => 'Siempre';
 
   @override
-  String get mixedRowsOnly => 'Mixed rows only';
+  String get mixedRowsOnly => 'Solo filas mixtas';
 
   @override
   String get hideUnwatched => 'Ocultar no vistos';
@@ -3244,7 +3270,7 @@ class AppLocalizationsEs extends AppLocalizations {
       'Efectos visuales y decoraciones de temporada';
 
   @override
-  String get loadingAnimation => 'Loading Animation';
+  String get loadingAnimation => 'Cargando animación';
 
   @override
   String get loadingAnimationDescription =>
@@ -3257,7 +3283,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get loadingAnimationImage => 'Image';
 
   @override
-  String get loadingAnimationImageMoonfinLogo => 'Moonfin Logo';
+  String get loadingAnimationImageMoonfinLogo => 'Logo de Moonfin';
 
   @override
   String get loadingAnimationImageSpinner => 'Spinner';
@@ -3266,13 +3292,13 @@ class AppLocalizationsEs extends AppLocalizations {
   String get loadingAnimationImageRunner => 'Runner';
 
   @override
-  String get loadingAnimationImageMoonPhases => 'Moon Phases';
+  String get loadingAnimationImageMoonPhases => 'Fases Lunares';
 
   @override
-  String get loadingAnimationImageMoonfinPhases => 'Moonfin Phases';
+  String get loadingAnimationImageMoonfinPhases => 'Fases de Moonfin';
 
   @override
-  String get loadingAnimationImageNeonfinPhases => 'Neonfin Phases';
+  String get loadingAnimationImageNeonfinPhases => 'Fases de Neonfin';
 
   @override
   String get loadingAnimationSize => 'Animation Size';
@@ -3983,7 +4009,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get buttonShownInSyncPlayGroup =>
-      'Only shows while you\'re in a SyncPlay group';
+      'Only shows while you\'re in a watch party';
 
   @override
   String get orientationLock => 'Orientation Lock';
@@ -13265,7 +13291,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get watchPartyRoomCode => 'Room code';
 
   @override
-  String get watchPartyStart => 'Start a Watch Party';
+  String get watchPartyStart => 'Start a watch party';
 
   @override
   String get watchPartyPickTitle =>
@@ -13306,6 +13332,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'The earliest point anyone here has reached.';
 
   @override
+  String get watchPartyResumeYours =>
+      'Where you left off. Everyone starts from there.';
+
+  @override
   String watchPartyResumeNotStarted(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -13323,7 +13353,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get watchPartyGuestsCanPause => 'Guests can play and pause';
 
   @override
-  String get watchPartyEnd => 'End Watch Party';
+  String get watchPartyEnd => 'End for everyone';
 
   @override
   String get watchPartyEnded => 'The Watch Party has ended.';
@@ -13334,6 +13364,333 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String watchPartyUpNext(String title) {
     return 'Up next: $title';
+  }
+
+  @override
+  String get watchParties => 'Watch Parties';
+
+  @override
+  String get watchPartyStartWith => 'Start parties with';
+
+  @override
+  String get watchPartyServiceMoonbaseHint =>
+      'Chat, reactions and voting. Runs on Moonbase.';
+
+  @override
+  String get watchPartyServiceSyncPlayHint =>
+      'Jellyfin\'s own. Friends on other Jellyfin apps can join.';
+
+  @override
+  String get watchPartyServiceNote =>
+      'You can join rooms of both kinds. This only picks what you start.';
+
+  @override
+  String get watchPartyDuringParty => 'During a party';
+
+  @override
+  String get watchPartyChatOverlay => 'Show chat over the video';
+
+  @override
+  String get watchPartyChatOverlaySubtitle =>
+      'New messages show for a few seconds';
+
+  @override
+  String get watchPartyAlerts => 'Party alerts';
+
+  @override
+  String get watchPartyAlertsSubtitle =>
+      'Tell me when someone on this server starts one';
+
+  @override
+  String get watchPartyJoinWithCode => 'Join with a code';
+
+  @override
+  String get watchPartyOnThisServer => 'On this server';
+
+  @override
+  String watchPartyCountOnServer(int count) {
+    return '$count on this server';
+  }
+
+  @override
+  String get watchPartyRoomsHint =>
+      'You need access to the item to join. A room closes when its last person leaves.';
+
+  @override
+  String get watchPartyRoomsEmpty =>
+      'Parties you can watch show up here. Got a code from someone? Pick Join with a code.';
+
+  @override
+  String get watchPartyPasteHint =>
+      'Pasting an invite link here works too. On a phone, the link opens Moonfin straight into the party.';
+
+  @override
+  String watchPartyWatchingCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count watching',
+      one: '$count watching',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String watchPartyHostsParty(String name) {
+    return '$name\'s party';
+  }
+
+  @override
+  String get watchPartyEveryoneControlsShort => 'Everyone controls';
+
+  @override
+  String get watchPartyVotingNow => 'Voting on what to watch';
+
+  @override
+  String get watchPartyNeedsMoonbase =>
+      'Watch Parties need Moonbase on this server';
+
+  @override
+  String get watchPartyNeedsMoonbaseHint =>
+      'Ask whoever runs the server to install the Moonbase plugin. On Jellyfin, SyncPlay still works without it.';
+
+  @override
+  String get watchPartyWrongPin => 'That PIN didn\'t work. Try again.';
+
+  @override
+  String get watchPartyTooManyTries => 'Too many tries. Wait a minute.';
+
+  @override
+  String get watchPartyFull => 'This party is full.';
+
+  @override
+  String get watchPartyNoSuchCode => 'No room has that code.';
+
+  @override
+  String get watchPartyNoAccess =>
+      'You don\'t have access to what they\'re watching.';
+
+  @override
+  String get watchPartyRemoved => 'The host removed you from the party.';
+
+  @override
+  String get watchPartyYours => 'Your watch party';
+
+  @override
+  String get watchPartyInviteHint =>
+      'Paste it in any chat. It opens a page on this server with an Open in Moonfin button.';
+
+  @override
+  String get watchPartySendInvite => 'Send the invite';
+
+  @override
+  String get watchPartyScanInvite =>
+      'Scan with your phone to get the invite link, then send it from there. Or just share the code.';
+
+  @override
+  String get watchPartyStartsTogether =>
+      'Play waits for everyone\'s player, 10 seconds at most, then counts down 3, 2, 1.';
+
+  @override
+  String get watchPartyStatusInSync => 'In sync';
+
+  @override
+  String get watchPartyStatusCatchingUp => 'Catching up';
+
+  @override
+  String get watchPartyStatusBuffering => 'Buffering';
+
+  @override
+  String get watchPartyStatusNotWatching => 'Not watching';
+
+  @override
+  String get watchPartyStatusReady => 'Ready';
+
+  @override
+  String get watchPartyStatusJoining => 'Joining';
+
+  @override
+  String get watchPartyHost => 'Host';
+
+  @override
+  String watchPartyWaitingFor(String name) {
+    return 'Waiting for $name\'s player';
+  }
+
+  @override
+  String watchPartyWaitingForCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Waiting for $count players',
+      one: 'Waiting for $count player',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String watchPartyStartingAnyway(int seconds) {
+    return 'Starting anyway in $seconds s';
+  }
+
+  @override
+  String get watchPartyStartingTogether => 'Starting together';
+
+  @override
+  String watchPartyToastPaused(String name) {
+    return '$name paused';
+  }
+
+  @override
+  String watchPartyToastResumed(String name) {
+    return '$name resumed';
+  }
+
+  @override
+  String watchPartyToastSkipped(String name, String time) {
+    return '$name skipped to $time';
+  }
+
+  @override
+  String watchPartyToastJoined(String name) {
+    return '$name joined';
+  }
+
+  @override
+  String watchPartyToastLeft(String name) {
+    return '$name left';
+  }
+
+  @override
+  String watchPartyToastSwitched(String name, String title) {
+    return '$name switched to $title';
+  }
+
+  @override
+  String get watchPartyToastYouAreHost => 'You\'re the host now';
+
+  @override
+  String watchPartyToastNewHost(String name) {
+    return '$name is the host now';
+  }
+
+  @override
+  String get watchPartyToastEveryoneControls =>
+      'Everyone can control playback now';
+
+  @override
+  String get watchPartyToastHostControls =>
+      'Only the host controls playback now';
+
+  @override
+  String get watchPartyOnlyHostControls =>
+      'Only the host can control playback.';
+
+  @override
+  String get watchPartyToastReconnecting => 'Reconnecting to the party...';
+
+  @override
+  String get watchPartyToastReconnected => 'Back in the party';
+
+  @override
+  String watchPartyToastEnded(String name) {
+    return '$name ended the party';
+  }
+
+  @override
+  String get watchPartyChat => 'Chat';
+
+  @override
+  String get watchPartySendToParty => 'Send to the party';
+
+  @override
+  String get watchPartyBackToClose => 'Back to close';
+
+  @override
+  String get watchPartyType => 'Type';
+
+  @override
+  String get watchPartyReplyHaha => 'Haha';
+
+  @override
+  String get watchPartyReplyNoWay => 'No way';
+
+  @override
+  String get watchPartyReplyPausePlease => 'Pause please';
+
+  @override
+  String get watchPartyReplyBrb => 'Brb';
+
+  @override
+  String get watchPartyReplyAgain => 'Again!';
+
+  @override
+  String get watchPartyReactionLove => 'Love';
+
+  @override
+  String get watchPartyReactionHaha => 'Haha';
+
+  @override
+  String get watchPartyReactionWow => 'Wow';
+
+  @override
+  String get watchPartyReactionSad => 'Sad';
+
+  @override
+  String get watchPartyReactionFire => 'Fire';
+
+  @override
+  String get watchPartyReactionPopcorn => 'Popcorn';
+
+  @override
+  String get watchPartyMakeHost => 'Make host';
+
+  @override
+  String get watchPartyEveryoneControls => 'Everyone can control playback';
+
+  @override
+  String get watchPartyEveryoneControlsHint =>
+      'Anyone can play, pause and skip';
+
+  @override
+  String get watchPartyRoomPin => 'Room PIN';
+
+  @override
+  String get watchPartyRoomPinHint => 'Ask for a PIN before anyone joins';
+
+  @override
+  String get watchPartyPinDigits => '4 to 8 digits';
+
+  @override
+  String get watchPartyLeave => 'Leave';
+
+  @override
+  String watchPartyLeaveHandsOver(String name) {
+    return 'Leave · $name hosts';
+  }
+
+  @override
+  String watchPartyStartedBy(String name) {
+    return '$name started a watch party';
+  }
+
+  @override
+  String watchPartyInLobbyCount(String title, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$title · $count in the lobby',
+      one: '$title · $count in the lobby',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get watchPartyFirstOnHome => 'It\'s first in Watch Parties on Home';
+
+  @override
+  String watchPartyAddServerQuestion(String address) {
+    return 'This invite is for a server you have not added yet, $address. Add it and sign in to join.';
   }
 
   @override
@@ -16122,7 +16479,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get settingsPlaybackSubtitle =>
-      'Player, quality, audio, subtitles, skipping, and SyncPlay';
+      'Player, quality, audio, subtitles, skipping, and watch parties';
 
   @override
   String get settingsStorageSubtitle =>
@@ -16162,7 +16519,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get settingsSkippingAndQueueSection => 'Skipping & Queue';
 
   @override
-  String get settingsWatchTogetherSection => 'Watch Together';
+  String get settingsWatchTogetherSection => 'Watch Parties';
 
   @override
   String get settingsAdvancedSection => 'Advanced';
@@ -16886,6 +17243,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get siloPinUnlock => 'Unlock';
 
   @override
+  String get siloPinRemember => 'Remember PIN on this device';
+
+  @override
   String get siloPinWrong => 'That PIN isn\'t right.';
 
   @override
@@ -16898,9 +17258,6 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get siloPinFailed => 'The PIN couldn\'t be checked. Try again.';
-
-  @override
-  String get siloSignOutAccount => 'Sign out of the Silo account';
 
   @override
   String trailerCount(int count) {
@@ -25206,12 +25563,66 @@ class AppLocalizationsEsAr extends AppLocalizationsEs {
   AppLocalizationsEsAr() : super('es_AR');
 
   @override
+  String get appTitle => 'Moonfin';
+
+  @override
+  String get animeMarkerFiller => 'Relleno';
+
+  @override
+  String get animeMarkerMixed => 'Mixto';
+
+  @override
+  String get animeMarkerAnimeCanon => 'Canon de Anime';
+
+  @override
+  String get animeMarkerMangaCanon => 'Canon de Manga';
+
+  @override
+  String get animeMarkerSubbed => 'Subtitulado';
+
+  @override
+  String get animeMarkerDubbed => 'Doblado';
+
+  @override
+  String get animeMarkerSubbedAndDubbed => 'Subtitulado/Doblado';
+
+  @override
+  String get animeMarkerSubbedShort => 'Subt.';
+
+  @override
+  String get animeMarkerDubbedShort => 'Dobl.';
+
+  @override
+  String get animeMarkerSubbedAndDubbedShort => 'Subt/Dobl';
+
+  @override
+  String get animeMarkerPending => 'Pendiente';
+
+  @override
+  String get animeMarkerRecap => 'Resumen';
+
+  @override
+  String get interfaceLanguage => 'Idioma de la interfaz';
+
+  @override
+  String get systemLanguageDefault => 'Predeterminado del sistema';
+
+  @override
   String get signIn => 'Iniciar sesión';
+
+  @override
+  String get signingIn => 'Iniciando sesión...';
+
+  @override
+  String get empty => 'Vacío';
 
   @override
   String connectingToServer(String serverName) {
     return 'Conectándose a $serverName';
   }
+
+  @override
+  String get quickConnect => 'Conexión Rápida';
 
   @override
   String get password => 'Contraseña';
@@ -25225,6 +25636,31 @@ class AppLocalizationsEsAr extends AppLocalizationsEs {
   @override
   String get quickConnectInstruction =>
       'Ingrese este código en el panel web de su servidor:';
+
+  @override
+  String get quickConnectScanHint =>
+      'O escanealo con un celular que tenga la sesión iniciada en tu servidor';
+
+  @override
+  String get quickConnectTapOrScanHint =>
+      'Tocá para aprobar en tu navegador, o escanealo con otro dispositivo';
+
+  @override
+  String get timesUpTitle => 'Se terminó el tiempo';
+
+  @override
+  String get timesUpMessage =>
+      'Esta cuenta no está disponible en este momento.';
+
+  @override
+  String timesUpResumesToday(String time) {
+    return 'Podés volver a usarla hoy a las $time.';
+  }
+
+  @override
+  String timesUpResumesTomorrow(String time) {
+    return 'Podés volver a usarla mañana a las $time.';
+  }
 
   @override
   String get waitingForAuthorization => 'Esperando autorización...';

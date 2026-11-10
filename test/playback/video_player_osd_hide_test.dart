@@ -26,19 +26,47 @@ import 'package:moonfin/preference/preference_constants.dart';
 import 'package:moonfin/preference/user_preferences.dart';
 import 'package:moonfin/ui/screens/playback/video_player_screen.dart';
 import 'package:moonfin/ui/screensaver/screensaver_controller.dart';
+import 'package:moonfin/ui/widgets/marquee_text.dart';
 import 'package:moonfin/ui/widgets/playback/skip_segment_overlay.dart';
 import 'package:moonfin/util/platform_detection.dart';
 
 import '../util/media_segment_fakes.dart';
 
+class _Images extends Fake implements ImageApi {
+  @override
+  String getChapterImageUrl(
+    String itemId, {
+    required int index,
+    int? maxWidth,
+    String? tag,
+  }) => 'https://server/$itemId/chapter/$index?tag=$tag';
+}
+
+class _UserLibrary implements UserLibraryApi {
+  final markedPlayed = <String>[];
+
+  @override
+  Future<void> markPlayed(String itemId) async => markedPlayed.add(itemId);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _Client extends Fake implements MediaServerClient {
   final items = FakeItemsApi();
+  final userLibrary = _UserLibrary();
 
   @override
   ServerType get serverType => ServerType.jellyfin;
 
   @override
   ItemsApi get itemsApi => items;
+
+  @override
+  ImageApi get imageApi => _Images();
+
+  @override
+  UserLibraryApi get userLibraryApi => userLibrary;
 
   @override
   TrickplayApi? get trickplayApi => null;
@@ -119,6 +147,7 @@ class _Manager extends PlaybackManager {
   final transport = <String>[];
   final seeks = <Duration>[];
   int stopCalls = 0;
+  int finishedStopCalls = 0;
   int nextInQueueCalls = 0;
   PlaybackBringupState bringup = const PlaybackBringupState.idle();
   StreamResolutionResult? resolution;
@@ -151,6 +180,11 @@ class _Manager extends PlaybackManager {
   @override
   Future<void> stop({bool userInitiated = true}) async {
     stopCalls++;
+  }
+
+  @override
+  Future<void> stopAsFinished() async {
+    finishedStopCalls++;
   }
 
   @override
@@ -203,6 +237,38 @@ void main() {
         home: const VideoPlayerScreen(),
       ),
     );
+    await tester.pumpAndSettle();
+  }
+
+  /// Mounts the player over a home route, so leaving it goes back there.
+  Future<void> mountRoutedPlayer(WidgetTester tester) async {
+    // Leaving playback resets the orientations, which waits on this channel.
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final router = GoRouter(
+      initialLocation: '/home',
+      routes: [
+        GoRoute(path: '/home', builder: (_, _) => const SizedBox()),
+        GoRoute(path: '/play', builder: (_, _) => const VideoPlayerScreen()),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: const [Locale('en')],
+      ),
+    );
+    router.push('/play');
     await tester.pumpAndSettle();
   }
 
@@ -460,6 +526,79 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('an automatic credits skip leaves the last episode finished', (
+    tester,
+  ) async {
+    final prefs = GetIt.instance<UserPreferences>();
+    await prefs.set(UserPreferences.mediaSegmentActions, 'outro:skip');
+    client.items.segments = [
+      segmentJson(id: 'outro', type: 'Outro', startMs: 3000, endMs: 4000),
+    ];
+    final raw = <String, dynamic>{'Id': 'ep1', 'Type': 'Episode'};
+    manager.queueService.setQueue([
+      AggregatedItem(id: 'ep1', serverId: 'server', rawData: raw),
+    ]);
+    await mountRoutedPlayer(tester);
+    // The credits run to the end.
+    manager.state.setDuration(const Duration(seconds: 4));
+    manager.state.setPosition(const Duration(milliseconds: 3500));
+    await tester.pumpAndSettle();
+
+    // Nothing follows it, so the player leaves rather than seeking past, and
+    // the stop it sends says the episode was played to the end.
+    expect(manager.seeks, isEmpty);
+    expect(manager.finishedStopCalls, 1);
+    expect(manager.stopCalls, 0);
+    expect(client.userLibrary.markedPlayed, ['ep1']);
+    expect((raw['UserData'] as Map)['Played'], isTrue);
+    expect(find.byType(VideoPlayerScreen), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Skip on the credits of the last episode leaves it finished', (
+    tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('window_manager'),
+      (call) async {
+        if (call.method == 'isFullScreen' || call.method == 'isVisible') {
+          return true;
+        }
+        return call.method.startsWith('is') ? false : null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('window_manager'),
+        null,
+      ),
+    );
+    // Long enough to be offered: shorter credits play on without asking.
+    client.items.segments = [
+      segmentJson(id: 'outro', type: 'Outro', startMs: 3000, endMs: 7000),
+    ];
+    final raw = <String, dynamic>{'Id': 'ep1', 'Type': 'Episode'};
+    manager.queueService.setQueue([
+      AggregatedItem(id: 'ep1', serverId: 'server', rawData: raw),
+    ]);
+    await mountRoutedPlayer(tester);
+    manager.state.setDuration(const Duration(seconds: 7));
+    manager.state.setPosition(const Duration(milliseconds: 3500));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Skip'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+    await tester.pumpAndSettle();
+    expect(manager.seeks, isEmpty);
+    expect(manager.finishedStopCalls, 1);
+    expect(manager.stopCalls, 0);
+    expect(client.userLibrary.markedPlayed, ['ep1']);
+    expect((raw['UserData'] as Map)['Played'], isTrue);
+    expect(find.byType(VideoPlayerScreen), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
   // Issue #1688: a resume that takes longer than the hide delay to start
   // playing left the controls up until a key was pressed.
   testWidgets('controls hide after a start slower than the hide delay', (
@@ -514,6 +653,69 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 10));
     expect(find.byType(Slider), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('chapters open as a row on the one playing, and seek', (
+    tester,
+  ) async {
+    manager.queueService.setQueue([
+      const AggregatedItem(
+        id: 'movie',
+        serverId: 'server',
+        rawData: {
+          'Id': 'movie',
+          'RunTimeTicks': 6000000000,
+          'Chapters': [
+            {'Name': 'Opening', 'StartPositionTicks': 0},
+            {
+              'Name': 'Heist',
+              'StartPositionTicks': 1200000000,
+              'ImageTag': 'abc',
+            },
+            {
+              'Name': 'Escape through the asteroid field with the cruiser behind',
+              'StartPositionTicks': 3600000000,
+            },
+          ],
+        },
+      ),
+    ]);
+    await mountPlayer(tester);
+    manager.state.setPosition(const Duration(minutes: 3));
+    await tester.tap(find.byIcon(Icons.bookmark_outline_rounded));
+    await tester.pumpAndSettle();
+
+    final row = tester.widget<ListView>(
+      find.descendant(of: find.byType(Dialog), matching: find.byType(ListView)),
+    );
+    expect(row.scrollDirection, Axis.horizontal);
+    expect(Focus.of(tester.element(find.text('Heist'))).hasFocus, isTrue);
+    expect(tester.widget<MarqueeText>(find.byType(MarqueeText)).text, 'Heist');
+    expect(find.text('2:00'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Image &&
+            w.image is NetworkImage &&
+            (w.image as NetworkImage).url ==
+                'https://server/movie/chapter/1?tag=abc',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      tester.widget<MarqueeText>(find.byType(MarqueeText)).text,
+      startsWith('Escape'),
+      reason: 'only the focused card scrolls its name',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+    expect(manager.seeks.last, const Duration(minutes: 6));
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -1104,4 +1306,71 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   }
+
+  // With nothing queued after it, skipping the credits closed the player even
+  // when they end well before the file does, so a scene after them was never
+  // shown.
+  testWidgets('an automatic credits skip plays what follows the credits', (
+    tester,
+  ) async {
+    await GetIt.instance<UserPreferences>().set(
+      UserPreferences.mediaSegmentActions,
+      'outro:skip',
+    );
+    client.items.segments = [
+      segmentJson(id: 'credits', type: 'Outro', startMs: 3000, endMs: 4000),
+      segmentJson(id: 'end', type: 'Outro', startMs: 12000, endMs: 15000),
+    ];
+    manager.queueService.setQueue([
+      AggregatedItem(
+        id: 'ep1',
+        serverId: 'server',
+        rawData: <String, dynamic>{'Id': 'ep1', 'Type': 'Episode'},
+      ),
+    ]);
+    await mountRoutedPlayer(tester);
+    manager.state.setDuration(const Duration(seconds: 20));
+
+    manager.state.setPosition(const Duration(milliseconds: 3500));
+    await tester.pump();
+    expect(manager.seeks, [const Duration(seconds: 4)]);
+    expect(manager.stopCalls, 0);
+    expect(find.byType(VideoPlayerScreen), findsOneWidget);
+
+    // Credits that end 5 seconds before the end still close the player.
+    manager.state.setPosition(const Duration(milliseconds: 12500));
+    await tester.pumpAndSettle();
+    expect(manager.seeks, [const Duration(seconds: 4)]);
+    expect(find.byType(VideoPlayerScreen), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Skip on the credits plays what follows them', (tester) async {
+    PlatformDetection.setTvMode(true);
+    addTearDown(() => PlatformDetection.setTvMode(false));
+    client.items.segments = [
+      segmentJson(id: 'credits', type: 'Outro', startMs: 3000, endMs: 6000),
+    ];
+    manager.queueService.setQueue([
+      AggregatedItem(
+        id: 'ep1',
+        serverId: 'server',
+        rawData: <String, dynamic>{'Id': 'ep1', 'Type': 'Episode'},
+      ),
+    ]);
+    await mountRoutedPlayer(tester);
+    manager.state.setDuration(const Duration(seconds: 12));
+
+    manager.state.setPosition(const Duration(milliseconds: 3500));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(SkipSegmentOverlay), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+    expect(manager.seeks, [const Duration(seconds: 6)]);
+    expect(manager.stopCalls, 0);
+    expect(find.byType(VideoPlayerScreen), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
