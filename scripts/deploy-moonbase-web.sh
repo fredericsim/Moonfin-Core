@@ -8,10 +8,15 @@ set -euo pipefail
 readonly release_repository="${MOONFIN_RELEASE_REPOSITORY:-fredericsim/Moonfin-Core}"
 readonly jellyfin_container="${JELLYFIN_CONTAINER:-jellyfin-app-1}"
 readonly public_manifest_url="${MOONFIN_PUBLIC_MANIFEST_URL:-https://movie.sopolak.com/Moonfin/Web/build-manifest.json}"
-readonly release_base_url="${MOONFIN_RELEASE_BASE_URL:-https://github.com/${release_repository}/releases/latest/download}"
+readonly release_base_url_override="${MOONFIN_RELEASE_BASE_URL:-}"
+readonly release_tag_override="${MOONFIN_RELEASE_TAG:-}"
+readonly release_api_url="${MOONFIN_RELEASE_API_URL:-https://api.github.com/repos/${release_repository}/releases?per_page=100}"
+readonly release_download_root="${MOONFIN_RELEASE_DOWNLOAD_ROOT:-https://github.com/${release_repository}/releases/download}"
 readonly temp_parent="${TMPDIR:-/tmp}"
 
 temp_dir=""
+release_base_url=""
+release_tag=""
 
 cleanup() {
   if [[ -n "${temp_dir}" && "${temp_dir}" == "${temp_parent%/}/moonfin-web-deploy."* ]]; then
@@ -42,7 +47,44 @@ archive_path="${temp_dir}/moonfin-web.tar.gz"
 checksum_path="${archive_path}.sha256"
 extract_dir="${temp_dir}/bundle"
 
-printf 'Downloading the latest Moonfin web release from %s...\n' "${release_repository}"
+if [[ -n "${release_base_url_override}" ]]; then
+  release_base_url="${release_base_url_override%/}"
+elif [[ -n "${release_tag_override}" ]]; then
+  [[ "${release_tag_override}" =~ ^moonfin-web-[0-9a-fA-F]{12}$ ]] \
+    || fail "MOONFIN_RELEASE_TAG is not a versioned Moonfin web release tag"
+  release_tag="${release_tag_override}"
+else
+  release_index_path="${temp_dir}/releases.json"
+  curl --fail --silent --show-error --location \
+    --header 'Accept: application/vnd.github+json' \
+    --header 'X-GitHub-Api-Version: 2022-11-28' \
+    --header 'User-Agent: moonfin-web-deployer' \
+    "${release_api_url}" \
+    --output "${release_index_path}"
+
+  release_tag="$(
+    awk '
+      match($0, /"tag_name"[[:space:]]*:[[:space:]]*"moonfin-web-[0-9a-fA-F]+"/) {
+        value = substr($0, RSTART, RLENGTH)
+        split(value, fields, "\"")
+        print fields[4]
+        exit
+      }
+    ' "${release_index_path}"
+  )"
+  [[ "${release_tag}" =~ ^moonfin-web-[0-9a-fA-F]{12}$ ]] \
+    || fail "No published versioned Moonfin web release was found"
+fi
+
+if [[ -n "${release_tag}" ]]; then
+  release_base_url="${release_download_root%/}/${release_tag}"
+  printf 'Downloading Moonfin web release %s from %s...\n' \
+    "${release_tag}" "${release_repository}"
+else
+  printf 'Downloading Moonfin web release from custom URL %s...\n' \
+    "${release_base_url}"
+fi
+
 curl --fail --silent --show-error --location \
   "${release_base_url}/moonfin-web.tar.gz" \
   --output "${archive_path}"
@@ -65,7 +107,10 @@ fi
 [[ "${actual_checksum}" == "${expected_checksum}" ]] \
   || fail "Moonfin bundle checksum mismatch"
 
-if tar -tzf "${archive_path}" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+archive_listing="${temp_dir}/archive-listing.txt"
+tar -tzf "${archive_path}" > "${archive_listing}" \
+  || fail "Could not list Moonfin bundle contents"
+if grep -Eq '(^/|(^|/)\.\.(/|$))' "${archive_listing}"; then
   fail "Moonfin bundle contains an unsafe path"
 fi
 
@@ -75,6 +120,7 @@ tar -xzf "${archive_path}" -C "${extract_dir}"
 for required_file in \
   index.html \
   flutter_bootstrap.js \
+  config.json \
   build-manifest.json \
   theme/index.html \
   theme/css/styles.css \
@@ -91,6 +137,8 @@ grep -Eq '"baseHref"[[:space:]]*:[[:space:]]*"/Moonfin/Web/"' "${bundle_manifest
   || fail "Moonfin bundle has the wrong base href"
 grep -Eq '"pluginMode"[[:space:]]*:[[:space:]]*true' "${bundle_manifest}" \
   || fail "Moonfin bundle is not a plugin-mode build"
+grep -Eq '"pluginMode"[[:space:]]*:[[:space:]]*true' "${extract_dir}/config.json" \
+  || fail "Moonfin runtime config is not in plugin mode"
 
 frontend_path="${MOONFIN_FRONTEND_PATH:-}"
 path_source="override"
@@ -112,11 +160,28 @@ if [[ -z "${frontend_path}" ]]; then
       || true
   )"
   candidate_count="$(printf '%s\n' "${candidates}" | awk 'NF { count++ } END { print count + 0 }')"
+
+  if [[ "${candidate_count}" == "0" ]]; then
+    candidates="$(
+      docker exec "${jellyfin_container}" sh -c \
+        'find /config/plugins -type f -name flutter_bootstrap.js -print 2>/dev/null' \
+        | grep -E '/(frontend|web)/flutter_bootstrap\.js$' \
+        || true
+    )"
+    candidate_count="$(printf '%s\n' "${candidates}" | awk 'NF { count++ } END { print count + 0 }')"
+    path_source="legacy automatic discovery"
+  else
+    path_source="automatic discovery"
+  fi
+
   [[ "${candidate_count}" == "1" ]] \
     || fail "Expected one active Moonbase frontend, found ${candidate_count}. Set MOONFIN_FRONTEND_PATH explicitly."
-  frontend_path="${candidates%/build-manifest.json}"
-  path_source="automatic discovery"
+  frontend_path="${candidates%/*}"
 fi
+
+while [[ "${frontend_path}" != "/" && "${frontend_path}" == */ ]]; do
+  frontend_path="${frontend_path%/}"
+done
 
 case "${frontend_path}" in
   ''|'/'|'/config'|'/config/plugins')
@@ -128,8 +193,16 @@ case "${frontend_path}" in
     ;;
 esac
 
+if [[ ! "${frontend_path}" =~ ^/config/plugins/[^/]+/(frontend|web)$ ]]; then
+  fail "Moonbase frontend path must be a frontend or web directory directly inside a plugin: ${frontend_path}"
+fi
+
 docker exec "${jellyfin_container}" test -d "${frontend_path}" \
   || fail "Moonbase frontend directory does not exist: ${frontend_path}"
+for existing_marker in index.html flutter_bootstrap.js; do
+  docker exec "${jellyfin_container}" test -f "${frontend_path}/${existing_marker}" \
+    || fail "Refusing to replace a directory without the Moonbase frontend marker ${existing_marker}: ${frontend_path}"
+done
 
 deploy_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 staged_path="${frontend_path}.new-${deploy_id}"
