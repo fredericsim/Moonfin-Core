@@ -72,7 +72,13 @@ fi
 mkdir -p "${extract_dir}"
 tar -xzf "${archive_path}" -C "${extract_dir}"
 
-for required_file in index.html flutter_bootstrap.js build-manifest.json; do
+for required_file in \
+  index.html \
+  flutter_bootstrap.js \
+  build-manifest.json \
+  theme/index.html \
+  theme/css/styles.css \
+  theme/js/app.js; do
   [[ -f "${extract_dir}/${required_file}" ]] \
     || fail "Moonfin bundle is missing ${required_file}"
 done

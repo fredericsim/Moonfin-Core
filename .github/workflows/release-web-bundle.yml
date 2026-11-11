@@ -92,6 +92,21 @@ jobs:
           flutter pub get
           flutter build web --wasm --release --base-href "/Moonfin/Web/"
 
+      - name: Sync and validate Theme Editor
+        run: |
+          mkdir -p build/web/theme
+          rsync -a --delete web/theme/ build/web/theme/
+
+          for required_file in \
+            build/web/theme/index.html \
+            build/web/theme/css/styles.css \
+            build/web/theme/js/app.js; do
+            if [ ! -f "$required_file" ]; then
+              echo "Missing required Theme Editor asset: $required_file" >&2
+              exit 1
+            fi
+          done
+
       - name: Ensure jq is available
         run: |
           if ! command -v jq >/dev/null 2>&1; then
@@ -164,6 +179,13 @@ jobs:
 
       - name: Package web bundle
         run: |
+          for required_file in \
+            build/web/theme/index.html \
+            build/web/theme/css/styles.css \
+            build/web/theme/js/app.js; do
+            test -f "$required_file"
+          done
+
           tar -czf moonfin-web.tar.gz -C build/web .
           sha256sum moonfin-web.tar.gz > moonfin-web.tar.gz.sha256
 
