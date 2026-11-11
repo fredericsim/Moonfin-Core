@@ -158,24 +158,27 @@ On Arch Linux, install from the AUR with `yay -S moonfin-bin` (or `paru -S moonf
 ### Deploying this fork to Moonbase
 
 This fork publishes a plugin-mode web release after the `Checks` workflow
-succeeds for a push to `main`. Releases are versioned by source commit and
-contain a checksum plus build manifest. GitHub Actions must be enabled for the
-fork, with permission to write repository contents, before automatic releases
-can be created.
+succeeds for the current commit on `main`. Releases are versioned by source
+commit and contain a checksum plus build manifest. A completed run for an older
+commit is not published if `main` has advanced. GitHub Actions must be enabled
+for the fork, with permission to write repository contents, before automatic
+releases can be created. A manual workflow run builds a downloadable Actions
+artifact for testing but cannot publish or promote a release.
 
-On a Jellyfin host with Docker, update a Moonfin checkout and deploy the latest
-release with:
+On a Jellyfin host with Docker, update a Moonfin checkout and deploy the newest
+versioned Moonfin web release with:
 
 ```bash
 git pull --ff-only origin main
 ./scripts/deploy-moonbase-web.sh
 ```
 
-The deployer downloads the latest release from `fredericsim/Moonfin-Core`,
-verifies its checksum and plugin-mode metadata, discovers Moonbase's active web
-directory, retains the previous frontend as a timestamped backup, restarts
-Jellyfin, and confirms the public build manifest. Its defaults match the
-Fredflix deployment and can be overridden when needed:
+The deployer selects the newest published `moonfin-web-<commit>` release from
+`fredericsim/Moonfin-Core` instead of relying on the repository-wide latest
+release, verifies its checksum and both copies of its plugin-mode metadata,
+discovers Moonbase's active web directory, retains the previous frontend as a
+timestamped backup, restarts Jellyfin, and confirms the public build manifest.
+Its defaults match the Fredflix deployment and can be overridden when needed:
 
 ```bash
 JELLYFIN_CONTAINER=my-jellyfin \

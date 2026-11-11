@@ -159,12 +159,19 @@ jobs:
           SOURCE_REF: ${{ github.event.workflow_run.head_branch || github.ref }}
         run: |
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          PLUGIN_MODE="$(jq -c '.pluginMode' build/web/config.json)"
+          if [ "$PLUGIN_MODE" != "true" ] && [ "$PLUGIN_MODE" != "false" ]; then
+            echo "Generated config.json has an invalid pluginMode value" >&2
+            exit 1
+          fi
+
           jq -n \
             --arg version "${{ steps.version.outputs.semver }}" \
             --arg commit "$SOURCE_SHA" \
             --arg ref "$SOURCE_REF" \
             --arg flutterVersion "${{ env.FLUTTER_VERSION }}" \
             --arg buildTime "$BUILD_TIME" \
+            --argjson pluginMode "$PLUGIN_MODE" \
             '{
               schemaVersion: 1,
               version: $version,
@@ -173,7 +180,7 @@ jobs:
               source: "fredericsim/Moonfin-Core",
               flutterVersion: $flutterVersion,
               baseHref: "/Moonfin/Web/",
-              pluginMode: true,
+              pluginMode: $pluginMode,
               buildTime: $buildTime
             }' > build/web/build-manifest.json
 
@@ -199,7 +206,32 @@ jobs:
             build/web/build-manifest.json
           if-no-files-found: error
 
+      - name: Confirm release source is current main
+        id: promotion
+        if: github.event_name == 'workflow_run'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          CURRENT_MAIN_SHA="$(git ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          if ! printf '%s' "$CURRENT_MAIN_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Could not resolve the current main commit" >&2
+            exit 1
+          fi
+
+          if [ "$SOURCE_SHA" = "$CURRENT_MAIN_SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale web release for $SOURCE_SHA; main is $CURRENT_MAIN_SHA"
+          fi
+
       - name: Publish versioned web release
+        if: >-
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          steps.promotion.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: moonfin-web-${{ steps.source.outputs.short }}
@@ -209,7 +241,7 @@ jobs:
             Automated plugin-mode Moonfin web build from commit `${{ steps.source.outputs.sha }}`.
 
             This bundle is intended for Moonbase at `/Moonfin/Web/`.
-          make_latest: true
+          make_latest: false
           files: |
             moonfin-web.tar.gz
             moonfin-web.tar.gz.sha256
