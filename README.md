@@ -155,6 +155,34 @@ The store links above are the easy route. To install a file yourself, download i
 
 On Arch Linux, install from the AUR with `yay -S moonfin-bin` (or `paru -S moonfin-bin`, `pamac build moonfin-bin`).
 
+### Deploying this fork to Moonbase
+
+This fork publishes a plugin-mode web release after the `Checks` workflow
+succeeds for a push to `main`. Releases are versioned by source commit and
+contain a checksum plus build manifest. GitHub Actions must be enabled for the
+fork, with permission to write repository contents, before automatic releases
+can be created.
+
+On a Jellyfin host with Docker, update a Moonfin checkout and deploy the latest
+release with:
+
+```bash
+git pull --ff-only origin main
+./scripts/deploy-moonbase-web.sh
+```
+
+The deployer downloads the latest release from `fredericsim/Moonfin-Core`,
+verifies its checksum and plugin-mode metadata, discovers Moonbase's active web
+directory, retains the previous frontend as a timestamped backup, restarts
+Jellyfin, and confirms the public build manifest. Its defaults match the
+Fredflix deployment and can be overridden when needed:
+
+```bash
+JELLYFIN_CONTAINER=my-jellyfin \
+MOONFIN_PUBLIC_MANIFEST_URL=https://media.example.com/Moonfin/Web/build-manifest.json \
+./scripts/deploy-moonbase-web.sh
+```
+
 Click-by-click steps for every platform are on [Installation](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Installation), and [Getting Started](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Getting-Started) covers connecting to your server for the first time.
 
 ## Building
