@@ -1,9 +1,11 @@
 name: Build Moonfin Web Bundle
 
 on:
-  release:
+  workflow_run:
+    workflows:
+      - Checks
     types:
-      - published
+      - completed
   workflow_dispatch:
     inputs:
       plugin_mode:
@@ -30,14 +32,48 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: moonfin-web-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
 env:
   FLUTTER_VERSION: '3.47.2'
 
 jobs:
   build-web-bundle:
+    # Automatic releases are created only after Checks passes for a push to
+    # main. Pull-request, scheduled, tag, and failed check runs cannot publish.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-26.04
     steps:
+      - name: Resolve source commit
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            SOURCE_SHA="$WORKFLOW_RUN_SHA"
+          else
+            SOURCE_SHA="$DISPATCH_SHA"
+          fi
+
+          if ! printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid source commit: $SOURCE_SHA" >&2
+            exit 1
+          fi
+
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.source.outputs.sha }}
 
       - uses: subosito/flutter-action@v2
         with:
@@ -55,6 +91,21 @@ jobs:
         run: |
           flutter pub get
           flutter build web --wasm --release --base-href "/Moonfin/Web/"
+
+      - name: Sync and validate Theme Editor
+        run: |
+          mkdir -p build/web/theme
+          rsync -a --delete web/theme/ build/web/theme/
+
+          for required_file in \
+            build/web/theme/index.html \
+            build/web/theme/css/styles.css \
+            build/web/theme/js/app.js; do
+            if [ ! -f "$required_file" ]; then
+              echo "Missing required Theme Editor asset: $required_file" >&2
+              exit 1
+            fi
+          done
 
       - name: Ensure jq is available
         run: |
@@ -103,43 +154,63 @@ jobs:
             }' > build/web/config.json
 
       - name: Write build manifest
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_REF: ${{ github.event.workflow_run.head_branch || github.ref }}
         run: |
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          cat > build/web/build-manifest.json <<EOF
-          {
-            "schemaVersion": 1,
-            "version": "${{ steps.version.outputs.semver }}",
-            "commit": "${{ github.sha }}",
-            "ref": "${{ github.ref }}",
-            "flutterVersion": "${{ env.FLUTTER_VERSION }}",
-            "baseHref": "/Moonfin/Web/",
-            "buildTime": "$BUILD_TIME"
-          }
-          EOF
+          jq -n \
+            --arg version "${{ steps.version.outputs.semver }}" \
+            --arg commit "$SOURCE_SHA" \
+            --arg ref "$SOURCE_REF" \
+            --arg flutterVersion "${{ env.FLUTTER_VERSION }}" \
+            --arg buildTime "$BUILD_TIME" \
+            '{
+              schemaVersion: 1,
+              version: $version,
+              commit: $commit,
+              ref: $ref,
+              source: "fredericsim/Moonfin-Core",
+              flutterVersion: $flutterVersion,
+              baseHref: "/Moonfin/Web/",
+              pluginMode: true,
+              buildTime: $buildTime
+            }' > build/web/build-manifest.json
 
       - name: Package web bundle
-        id: package
         run: |
-          TARBALL="moonfin-web-v${{ steps.version.outputs.semver }}.tar.gz"
-          tar -czf "$TARBALL" -C build/web .
-          sha256sum "$TARBALL" > "$TARBALL.sha256"
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          for required_file in \
+            build/web/theme/index.html \
+            build/web/theme/css/styles.css \
+            build/web/theme/js/app.js; do
+            test -f "$required_file"
+          done
 
-      - name: Upload bundle artifact
+          tar -czf moonfin-web.tar.gz -C build/web .
+          sha256sum moonfin-web.tar.gz > moonfin-web.tar.gz.sha256
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: moonfin-web-bundle-${{ steps.version.outputs.semver }}
+          name: moonfin-web-${{ steps.source.outputs.short }}
           path: |
-            ${{ steps.package.outputs.tarball }}
-            ${{ steps.package.outputs.tarball }}.sha256
+            moonfin-web.tar.gz
+            moonfin-web.tar.gz.sha256
             build/web/build-manifest.json
           if-no-files-found: error
 
-      - name: Upload assets to release
-        if: github.event_name == 'release'
+      - name: Publish versioned web release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: moonfin-web-${{ steps.source.outputs.short }}
+          target_commitish: ${{ steps.source.outputs.sha }}
+          name: Moonfin Web ${{ steps.source.outputs.short }}
+          body: |
+            Automated plugin-mode Moonfin web build from commit `${{ steps.source.outputs.sha }}`.
+
+            This bundle is intended for Moonbase at `/Moonfin/Web/`.
+          make_latest: true
           files: |
-            ${{ steps.package.outputs.tarball }}
-            ${{ steps.package.outputs.tarball }}.sha256
+            moonfin-web.tar.gz
+            moonfin-web.tar.gz.sha256
             build/web/build-manifest.json
