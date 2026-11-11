@@ -21,6 +21,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../../util/platform_detection.dart';
 import '../../navigation/destinations.dart';
 import '../../widgets/login_scaffold.dart';
+import '../../widgets/oidc_sign_in_buttons.dart';
 import '../../widgets/pin_entry_dialog.dart';
 import '../../widgets/profile_carousel.dart';
 import 'silo_profile_unlock.dart';
@@ -391,6 +392,7 @@ class _ServerScreenState extends State<ServerScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
+                      OidcSignInButtons(server: server),
                       ProfileCarousel(
                         entries: entries,
                         selected: _selected,
@@ -478,6 +480,8 @@ class _ServerScreenState extends State<ServerScreen> {
                             context.go('${Destinations.login}?serverId=${server.id}'),
                         addLabel: l10n.addUser,
                       ),
+                      const SizedBox(height: 20),
+                      OidcSignInButtons(server: server),
                       ..._buildNotices(server),
                     ],
                   ),

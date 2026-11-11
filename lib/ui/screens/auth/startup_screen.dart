@@ -12,6 +12,7 @@ import '../../../auth/store/authentication_preferences.dart';
 import '../../../auth/store/credential_store.dart';
 import '../../../data/services/connectivity_service.dart';
 import '../../../l10n/app_localizations.dart';
+import '../../../platform/web_runtime_config.dart';
 import '../../../util/pin_code_util.dart';
 import '../../../preference/preference_constants.dart';
 import '../../navigation/destinations.dart';
@@ -19,6 +20,17 @@ import '../../widgets/adaptive/adaptive_dialog.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../widgets/pin_entry_dialog.dart';
 import '../../widgets/focus/request_initial_focus.dart';
+
+@visibleForTesting
+String unauthenticatedStartupRoute({
+  required String? targetServerId,
+  required bool webPluginMode,
+}) {
+  if (!webPluginMode && targetServerId != null && targetServerId.isNotEmpty) {
+    return '${Destinations.server}?serverId=$targetServerId';
+  }
+  return Destinations.serverSelect;
+}
 
 class StartupScreen extends StatefulWidget {
   final bool bootstrapActiveSession;
@@ -165,13 +177,15 @@ class _StartupScreenState extends State<StartupScreen>
       if (mounted) context.go(Destinations.home);
     } else {
       if (mounted) {
-        if (targetServerId != null && targetServerId.isNotEmpty) {
-          // A previously-used server is known — go straight to user selection
-          // for that server rather than the Add Server page.
-          context.go('${Destinations.server}?serverId=$targetServerId');
-        } else {
-          context.go(Destinations.serverSelect);
-        }
+        // Plugin-mode web builds pass through server selection even when the
+        // server is already known. That screen invisibly auto-connects and is
+        // also where credentials written by an OIDC callback are imported.
+        context.go(
+          unauthenticatedStartupRoute(
+            targetServerId: targetServerId,
+            webPluginMode: kIsWeb && webRuntimeConfig.pluginMode,
+          ),
+        );
       }
     }
   }
