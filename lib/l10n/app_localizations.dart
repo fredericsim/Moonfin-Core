@@ -907,7 +907,7 @@ abstract class AppLocalizations {
   /// Explanation under the recommendation system setting
   ///
   /// In en, this message translates to:
-  /// **'Use the Moonfin Recommends local-library algorithm, Jellyfin Recommends server engine, or the online TMDb\'s Similarity Metrics. Note: Online recommendations require Seerr integration.'**
+  /// **'Use the Moonfin Recommends local-library algorithm, Server Recommends from your media server, or the online TMDb\'s Similarity Metrics. Note: Online recommendations require Seerr integration.'**
   String get recommendationSystemSubtitle;
 
   /// Recommendation system option: Moonfin Recommends
@@ -916,10 +916,10 @@ abstract class AppLocalizations {
   /// **'Moonfin Recommends'**
   String get recommendationSystemMoonfin;
 
-  /// Recommendation system option: Jellyfin Recommends
+  /// Recommendation system option: Server Recommends
   ///
   /// In en, this message translates to:
-  /// **'Jellyfin Recommends'**
+  /// **'Server Recommends'**
   String get recommendationSystemJellyfin;
 
   /// Recommendation system option: TMDb Similarity
@@ -6907,14 +6907,8 @@ abstract class AppLocalizations {
   /// Subtitle of the Upcoming Calendars settings entry
   ///
   /// In en, this message translates to:
-  /// **'Toggle Upcoming Calendars from Radarr/Sonarr.'**
+  /// **'Choose what the Radarr and Sonarr rows show.'**
   String get upcomingCalendarsDescription;
-
-  /// Turns on the Radarr calendar home row
-  ///
-  /// In en, this message translates to:
-  /// **'Enable Radarr\'s Upcoming Calendar'**
-  String get enableRadarrCalendar;
 
   /// Includes cinema release dates in the Radarr calendar row
   ///
@@ -6945,12 +6939,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide Movies Already on the Server'**
   String get radarrCalendarHideDownloaded;
-
-  /// Turns on the Sonarr calendar home row
-  ///
-  /// In en, this message translates to:
-  /// **'Enable Sonarr\'s Upcoming Calendar'**
-  String get enableSonarrCalendar;
 
   /// Shows the season and episode number in the Sonarr calendar row
   ///
@@ -8530,6 +8518,24 @@ abstract class AppLocalizations {
   /// **'Show libraries from all connected servers'**
   String get showLibrariesFromAllServers;
 
+  /// Section title for Recently Added and Recently Released home row settings
+  ///
+  /// In en, this message translates to:
+  /// **'Recently Added and Released'**
+  String get recentlyAddedAndReleased;
+
+  /// Setting to hide watched items from Recently Added and Recently Released home rows
+  ///
+  /// In en, this message translates to:
+  /// **'Hide Watched'**
+  String get hideWatchedInRecentRows;
+
+  /// Description for hiding watched items from Recently Added and Recently Released home rows
+  ///
+  /// In en, this message translates to:
+  /// **'Hide watched content from Recently Added and Recently Released home rows.'**
+  String get hideWatchedInRecentRowsDescription;
+
   /// Setting for merging recently added and recently released libraries by media type
   ///
   /// In en, this message translates to:
@@ -9316,11 +9322,17 @@ abstract class AppLocalizations {
   /// **'Genres and Studios'**
   String get homeRowsGenresAndStudios;
 
-  /// Home Rows editor: heading of the group of disabled rows from IMDb, TMDB, Letterboxd and MDBList lists
+  /// Home Rows editor: heading of the group of disabled rows from custom lists a user set up, such as their own MDBList, TMDB or Letterboxd lists
   ///
   /// In en, this message translates to:
   /// **'External Lists'**
   String get homeRowsExternalLists;
+
+  /// Home Rows editor: heading of the group of disabled rows showing what's popular on Netflix, Prime Video, Disney+ and other streaming services
+  ///
+  /// In en, this message translates to:
+  /// **'Streaming Services'**
+  String get homeRowsStreamingServices;
 
   /// Section title for per-row settings
   ///
@@ -9759,12 +9771,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Watching on MDBList'**
   String get mdblistWatchingNow;
-
-  /// Description for the Watching on MDBList setting
-  ///
-  /// In en, this message translates to:
-  /// **'Show what MDBList users are currently watching'**
-  String get mdblistWatchingNowDescription;
 
   /// Badge on Watching on MDBList card showing current watchers count
   ///
@@ -10479,6 +10485,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Download failed'**
   String get seerrDownloadFailed;
+
+  /// Label on the Seerr download bar when the download finished but Radarr/Sonarr refuses to import it, for example because the release contains an executable
+  ///
+  /// In en, this message translates to:
+  /// **'Import blocked'**
+  String get seerrImportBlocked;
+
+  /// Shown where the Seerr download bar would be, when a request was approved and Radarr has the released movie but has not found a release to download yet
+  ///
+  /// In en, this message translates to:
+  /// **'Not found yet'**
+  String get seerrNotFoundYet;
+
+  /// Admin-only button on a Seerr title's detail screen, and the title and confirm button of its dialog. It removes a stuck download, blocks that release, and has Radarr/Sonarr search for another one
+  ///
+  /// In en, this message translates to:
+  /// **'Get a different release'**
+  String get seerrGetDifferentRelease;
+
+  /// Body of the confirm dialog for Get a different release
+  ///
+  /// In en, this message translates to:
+  /// **'{service} will remove {release} from the download client, block it so it isn\'t grabbed again, and search for another release.'**
+  String seerrGetDifferentReleaseConfirm(String service, String release);
+
+  /// Short confirmation after Get a different release removed the stuck download
+  ///
+  /// In en, this message translates to:
+  /// **'Removed. {service} is searching for another release.'**
+  String seerrGetDifferentReleaseDone(String service);
+
+  /// Error shown when Get a different release could not remove the stuck download
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t remove the download'**
+  String get seerrGetDifferentReleaseFailed;
 
   /// Status bar item count
   ///
@@ -19888,6 +19930,12 @@ abstract class AppLocalizations {
   /// **'Enter your PIN to restore the full app'**
   String get kidsModeExitSubtitle;
 
+  /// Shown in the PIN dialog when a link asks to switch to another user while Kids Mode is on. {name} is the user being switched to
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the Kids Mode PIN to switch to {name}'**
+  String kidsModePinToSwitchUser(String name);
+
   /// No description provided for @pinIncorrect.
   ///
   /// In en, this message translates to:
@@ -21916,6 +21964,12 @@ abstract class AppLocalizations {
   /// **'Modern'**
   String get homeRowsStyleModern;
 
+  /// Name of the home row style that shows a large details panel under each row's posters
+  ///
+  /// In en, this message translates to:
+  /// **'Carousel'**
+  String get homeRowsStyleCarousel;
+
   /// No description provided for @homeRowsSection.
   ///
   /// In en, this message translates to:
@@ -21931,7 +21985,7 @@ abstract class AppLocalizations {
   /// No description provided for @rowsTypeDescription.
   ///
   /// In en, this message translates to:
-  /// **'Classic keeps per-row image type and info overlay. Modern uses portrait-to-backdrop rows.'**
+  /// **'Classic keeps per-row image type and info overlay. Modern uses portrait-to-backdrop rows. Carousel adds a details panel under each row.'**
   String get rowsTypeDescription;
 
   /// No description provided for @modernCardsOnMyMediaRow.
@@ -22135,7 +22189,7 @@ abstract class AppLocalizations {
   /// No description provided for @sinceYouWatchedSourceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Choose recommendation source (Moonfin Recommends custom local algorithm, Jellyfin Recommends server engine, or TMDb\'s similarity metrics. Note: Online recommendations require Seerr integration).'**
+  /// **'Choose recommendation source (Moonfin Recommends custom local algorithm, Server Recommends from your media server, or TMDb\'s similarity metrics. Note: Online recommendations require Seerr integration).'**
   String get sinceYouWatchedSourceDescription;
 
   /// No description provided for @sinceYouWatchedSourceLocal.
@@ -22147,7 +22201,7 @@ abstract class AppLocalizations {
   /// No description provided for @sinceYouWatchedSourceServer.
   ///
   /// In en, this message translates to:
-  /// **'Jellyfin Recommends'**
+  /// **'Server Recommends'**
   String get sinceYouWatchedSourceServer;
 
   /// No description provided for @sinceYouWatchedSourceOnline.
@@ -27277,6 +27331,12 @@ abstract class AppLocalizations {
   /// **'Larger cards with titles underneath.'**
   String get setupRowsModernHint;
 
+  /// What the carousel home row style gives you
+  ///
+  /// In en, this message translates to:
+  /// **'Posters with a large details panel underneath.'**
+  String get setupRowsCarouselHint;
+
   /// What the classic detail screen style gives you
   ///
   /// In en, this message translates to:
@@ -28582,18 +28642,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Passthrough Settings'**
   String get settingsPassthroughSettingsSection;
-
-  /// Section header on the IMDb Lists settings screen over the IMDb row switches
-  ///
-  /// In en, this message translates to:
-  /// **'IMDb Lists'**
-  String get settingsImdbListsSection;
-
-  /// Section header on the TMDB Lists settings screen over the TMDB row switches
-  ///
-  /// In en, this message translates to:
-  /// **'TMDB Lists'**
-  String get settingsTmdbListsSection;
 
   /// Section header on the Seerr Lists settings screen for the Seerr rows shown on the home page
   ///
@@ -31372,6 +31420,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Left and Right slide the scrubber.'**
   String get afterHoursPixelPurgeCardRemote;
+
+  /// Apple TV video playback setting label for when clicks and swipes on the Siri Remote clickpad may jump through the video
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Clickpad Seeking'**
+  String get clickpadSeeking;
+
+  /// Subtitle of the Apple TV clickpad seeking setting. Explains that when seeking isn't allowed, a click or swipe only shows the player controls
+  ///
+  /// In en, this message translates to:
+  /// **'When Left, Right and touchpad swipes can seek. Otherwise the first one brings up the controls.'**
+  String get clickpadSeekingDescription;
+
+  /// Option of the Apple TV clickpad seeking setting: the remote seeks only while the player controls are on screen
+  ///
+  /// In en, this message translates to:
+  /// **'When controls are showing'**
+  String get clickpadSeekingControlsVisible;
+
+  /// Option of the Apple TV clickpad seeking setting: the remote seeks only while playback is paused and the controls are on screen
+  ///
+  /// In en, this message translates to:
+  /// **'Only while paused'**
+  String get clickpadSeekingPausedOnly;
 }
 
 class _AppLocalizationsDelegate
