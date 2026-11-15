@@ -6,12 +6,13 @@ set -euo pipefail
 # .github/workflows/release-web-bundle.yml after Checks succeeds on main.
 
 readonly release_repository="${MOONFIN_RELEASE_REPOSITORY:-fredericsim/Moonfin-Core}"
-readonly jellyfin_container="${JELLYFIN_CONTAINER:-jellyfin-app-1}"
+readonly jellyfin_container="${JELLYFIN_CONTAINER:-jellyfin-selfhosted}"
 readonly public_manifest_url="${MOONFIN_PUBLIC_MANIFEST_URL:-https://movie.sopolak.com/Moonfin/Web/build-manifest.json}"
 readonly release_base_url_override="${MOONFIN_RELEASE_BASE_URL:-}"
 readonly release_tag_override="${MOONFIN_RELEASE_TAG:-}"
 readonly release_api_url="${MOONFIN_RELEASE_API_URL:-https://api.github.com/repos/${release_repository}/releases?per_page=100}"
 readonly release_download_root="${MOONFIN_RELEASE_DOWNLOAD_ROOT:-https://github.com/${release_repository}/releases/download}"
+readonly backup_retention="${MOONFIN_BACKUP_RETENTION:-1}"
 readonly temp_parent="${TMPDIR:-/tmp}"
 
 temp_dir=""
@@ -30,7 +31,10 @@ fail() {
   exit 1
 }
 
-for command_name in curl docker tar awk grep sed head tail tr date sleep mktemp; do
+[[ "${backup_retention}" =~ ^(0|[1-9][0-9]*)$ ]] \
+  || fail "MOONFIN_BACKUP_RETENTION must be a non-negative integer"
+
+for command_name in curl docker tar awk grep sed head tail tr date sleep mktemp sort; do
   command -v "${command_name}" >/dev/null 2>&1 \
     || fail "Required command not found: ${command_name}"
 done
@@ -262,8 +266,49 @@ if [[ "${verified}" != "true" ]]; then
   exit 1
 fi
 
+backup_parent="${frontend_path%/*}"
+backup_name="${frontend_path##*/}"
+other_backup_candidates="$(
+  docker exec "${jellyfin_container}" find "${backup_parent}" \
+    -maxdepth 1 -type d -name "${backup_name}.backup-*" -print 2>/dev/null \
+    | awk -v current="${backup_path}" '$0 != current' \
+    | sort -r
+)"
+backup_candidates="$(
+  printf '%s\n' "${backup_path}"
+  printf '%s\n' "${other_backup_candidates}" | awk 'NF'
+)"
+backups_to_prune="$(
+  printf '%s\n' "${backup_candidates}" \
+    | awk -v keep="${backup_retention}" 'NF { seen++; if (seen > keep) print }'
+)"
+
+while IFS= read -r old_backup; do
+  [[ -n "${old_backup}" ]] || continue
+  case "${old_backup}" in
+    "${frontend_path}.backup-"*) ;;
+    *) fail "Refusing to prune unexpected Moonbase backup path: ${old_backup}" ;;
+  esac
+
+  if ! docker exec "${jellyfin_container}" rm -rf -- "${old_backup}"; then
+    fail "Deployment verified, but old Moonbase backup cleanup failed: ${old_backup}"
+  fi
+  printf 'Pruned old Moonbase frontend backup: %s\n' "${old_backup}"
+done <<< "${backups_to_prune}"
+
+retained_backup_count="$(
+  printf '%s\n' "${backup_candidates}" \
+    | awk -v keep="${backup_retention}" 'NF && seen < keep { seen++ } END { print seen + 0 }'
+)"
+
 printf '\nMoonfin web deployment complete.\n'
 printf '  Commit: %s\n' "${bundle_commit}"
 printf '  Frontend: %s\n' "${frontend_path}"
-printf '  Backup: %s\n' "${backup_path}"
+if [[ "${backup_retention}" == "0" ]]; then
+  printf '  Backup: none retained (MOONFIN_BACKUP_RETENTION=0)\n'
+else
+  printf '  Backup: %s\n' "${backup_path}"
+  printf '  Retained backups: %s of maximum %s\n' \
+    "${retained_backup_count}" "${backup_retention}"
+fi
 printf '  Verified: %s\n' "${public_manifest_url}"
