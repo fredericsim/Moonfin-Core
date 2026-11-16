@@ -8,8 +8,8 @@ import 'package:server_core/server_core.dart';
 
 Server _server({ServerType type = ServerType.jellyfin}) => Server(
   id: 'server',
-  name: 'Fredflix',
-  address: 'https://movie.sopolak.com',
+  name: 'Test Jellyfin',
+  address: 'https://jellyfin.example.com',
   version: '12.2.0',
   serverType: type,
   dateAdded: DateTime(2026),
@@ -20,7 +20,7 @@ OidcProvider _google() => OidcProvider(
   displayName: 'google',
   buttonColor: '#4285f4',
   buttonIcon: '',
-  startUri: Uri.parse('https://movie.sopolak.com/sso/OIDC/Start/google'),
+  startUri: Uri.parse('https://jellyfin.example.com/sso/OIDC/Start/google'),
 );
 
 Widget _app(Widget child) => MaterialApp(
@@ -37,7 +37,7 @@ void main() {
         OidcSignInButtons(
           server: _server(),
           webEnabled: true,
-          pageOrigin: 'https://movie.sopolak.com',
+          pageOrigin: 'https://jellyfin.example.com',
           loadProviders: (_) async => [_google()],
           navigate: (uri) {
             opened = uri;
@@ -52,7 +52,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('oidc-google')));
     expect(
       opened,
-      Uri.parse('https://movie.sopolak.com/sso/OIDC/Start/google'),
+      Uri.parse('https://jellyfin.example.com/sso/OIDC/Start/google'),
     );
   });
 
@@ -84,7 +84,7 @@ void main() {
           OidcSignInButtons(
             server: _server(type: ServerType.plex),
             webEnabled: true,
-            pageOrigin: 'https://movie.sopolak.com',
+            pageOrigin: 'https://jellyfin.example.com',
             loadProviders: loader,
           ),
         ),
@@ -101,7 +101,7 @@ void main() {
         OidcSignInButtons(
           server: _server(),
           webEnabled: false,
-          pageOrigin: 'https://movie.sopolak.com',
+          pageOrigin: 'https://jellyfin.example.com',
           loadProviders: (_) async {
             called = true;
             return [_google()];
