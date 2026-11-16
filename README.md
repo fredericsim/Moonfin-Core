@@ -170,6 +170,7 @@ versioned Moonfin web release with:
 
 ```bash
 git pull --ff-only origin main
+MOONFIN_PUBLIC_MANIFEST_URL=https://jellyfin.example.com/Moonfin/Web/build-manifest.json \
 ./scripts/deploy-moonbase-web.sh
 ```
 
@@ -178,11 +179,12 @@ The deployer selects the newest published `moonfin-web-<commit>` release from
 release, verifies its checksum and both copies of its plugin-mode metadata,
 discovers Moonbase's active web directory, retains the previous frontend as a
 timestamped backup, restarts Jellyfin, and confirms the public build manifest.
-Host-specific values can be overridden when needed:
+`MOONFIN_PUBLIC_MANIFEST_URL` is required. Other host-specific values can be
+overridden when needed:
 
 ```bash
 JELLYFIN_CONTAINER=my-jellyfin \
-MOONFIN_PUBLIC_MANIFEST_URL=https://media.example.com/Moonfin/Web/build-manifest.json \
+MOONFIN_PUBLIC_MANIFEST_URL=https://jellyfin.example.com/Moonfin/Web/build-manifest.json \
 ./scripts/deploy-moonbase-web.sh
 ```
 

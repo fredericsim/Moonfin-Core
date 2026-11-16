@@ -7,7 +7,7 @@ set -euo pipefail
 
 readonly release_repository="${MOONFIN_RELEASE_REPOSITORY:-fredericsim/Moonfin-Core}"
 readonly jellyfin_container="${JELLYFIN_CONTAINER:-jellyfin-app-1}"
-readonly public_manifest_url="${MOONFIN_PUBLIC_MANIFEST_URL:-https://movie.sopolak.com/Moonfin/Web/build-manifest.json}"
+readonly public_manifest_url="${MOONFIN_PUBLIC_MANIFEST_URL:-}"
 readonly release_base_url_override="${MOONFIN_RELEASE_BASE_URL:-}"
 readonly release_tag_override="${MOONFIN_RELEASE_TAG:-}"
 readonly release_api_url="${MOONFIN_RELEASE_API_URL:-https://api.github.com/repos/${release_repository}/releases?per_page=100}"
@@ -29,6 +29,9 @@ fail() {
   printf 'Error: %s\n' "$*" >&2
   exit 1
 }
+
+[[ -n "${public_manifest_url}" ]] \
+  || fail "MOONFIN_PUBLIC_MANIFEST_URL is required"
 
 for command_name in curl docker tar awk grep sed head tail tr date sleep mktemp; do
   command -v "${command_name}" >/dev/null 2>&1 \
