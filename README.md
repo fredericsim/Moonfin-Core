@@ -176,22 +176,15 @@ git pull --ff-only origin main
 The deployer selects the newest published `moonfin-web-<commit>` release from
 `fredericsim/Moonfin-Core` instead of relying on the repository-wide latest
 release, verifies its checksum and both copies of its plugin-mode metadata,
-discovers Moonbase's active web directory, retains the newest previous frontend
-as a rollback backup, prunes older frontend backups after successful public
-verification, restarts Jellyfin, and confirms the public build manifest. Its
-defaults match the Fredflix deployment and can be overridden when needed:
+discovers Moonbase's active web directory, retains the previous frontend as a
+timestamped backup, restarts Jellyfin, and confirms the public build manifest.
+Its defaults match the Fredflix deployment and can be overridden when needed:
 
 ```bash
 JELLYFIN_CONTAINER=my-jellyfin \
-MOONFIN_BACKUP_RETENTION=2 \
 MOONFIN_PUBLIC_MANIFEST_URL=https://media.example.com/Moonfin/Web/build-manifest.json \
 ./scripts/deploy-moonbase-web.sh
 ```
-
-The default container is `jellyfin-selfhosted` and the default backup retention
-is one. Set `MOONFIN_BACKUP_RETENTION=0` to retain no frontend rollback copy, or
-use a larger non-negative integer to keep more. Backups are pruned only after
-the newly deployed public manifest reports the expected commit.
 
 Click-by-click steps for every platform are on [Installation](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Installation), and [Getting Started](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Getting-Started) covers connecting to your server for the first time.
 

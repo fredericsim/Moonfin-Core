@@ -108,8 +108,6 @@ jobs:
 
           case "${{ matrix.suite }}" in
             analyze-packages)
-              scripts/tests/deploy-moonbase-web-test.sh || status=1
-
               for pkg in $packages; do
                 (cd "packages/$pkg" && flutter pub get >/dev/null)
               done
