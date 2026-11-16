@@ -165,24 +165,20 @@ for the fork, with permission to write repository contents, before automatic
 releases can be created. A manual workflow run builds a downloadable Actions
 artifact for testing but cannot publish or promote a release.
 
-The production [Fredflix](https://github.com/fredericsim/fredflix) deployment
-consumes these releases from its persistent NAS checkout:
+On a Jellyfin host with Docker, update a Moonfin checkout and deploy the newest
+versioned Moonfin web release with:
 
 ```bash
-cd /volume1/docker/fredflix
 git pull --ff-only origin main
-./scripts/deploy
+./scripts/deploy-moonbase-web.sh
 ```
 
-Fredflix owns the deployment-specific container defaults and operating
-procedure. The NAS does not need a Moonfin source checkout, Flutter toolchain,
-or local wrapper to install a published release.
-
-For other Docker-based Jellyfin hosts, this repository's generic deployer can
-download and verify the newest `moonfin-web-<commit>` release, discover
-Moonbase's active web directory, retain the previous frontend, restart
-Jellyfin, and confirm the public build manifest. Supply the host-specific
-container and public manifest URL explicitly:
+The deployer selects the newest published `moonfin-web-<commit>` release from
+`fredericsim/Moonfin-Core` instead of relying on the repository-wide latest
+release, verifies its checksum and both copies of its plugin-mode metadata,
+discovers Moonbase's active web directory, retains the previous frontend as a
+timestamped backup, restarts Jellyfin, and confirms the public build manifest.
+Host-specific values can be overridden when needed:
 
 ```bash
 JELLYFIN_CONTAINER=my-jellyfin \
