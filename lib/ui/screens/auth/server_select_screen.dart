@@ -211,8 +211,25 @@ class _ServerSelectScreenState extends State<ServerSelectScreen> {
       }
     }
 
+    setState(() {
+      _isConnecting = true;
+      _errorMessage = null;
+      _untrustedAddress = null;
+    });
+
     try {
-      await _addServerWithoutAutoNavigation(configuredAddress);
+      final server = await _addServerWithoutAutoNavigation(configuredAddress);
+      if (!mounted) return;
+      if (server != null) {
+        // Automatic addition suppresses the stream's navigation so credential
+        // import can finish first. Without credentials, open sign-in ourselves.
+        context.go('${Destinations.server}?serverId=${server.id}');
+      } else if (_isConnecting) {
+        setState(() {
+          _isConnecting = false;
+          _errorMessage = AppLocalizations.of(context).unableToConnectToServer;
+        });
+      }
     } catch (_) {
       if (!mounted) return;
       _maybeOpenWebDiagnosticsForFailure(targetUrl: configuredAddress);

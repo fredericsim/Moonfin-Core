@@ -146,7 +146,7 @@ jobs:
             web)
               # Compile-time browser branches are unreachable from the
               # default VM test platform used by the app shards.
-              flutter test --platform chrome --reporter json test/web/pwa_mobile_policy_test.dart > /tmp/test-results/web.jsonl || status=1
+              flutter test --platform chrome --reporter json test/web/pwa_mobile_policy_test.dart test/web/server_select_autoconnect_test.dart > /tmp/test-results/web.jsonl || status=1
               ;;
             kotlin)
               # gradlew is gitignored, and only a Flutter build writes it.
