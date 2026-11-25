@@ -53,6 +53,8 @@ class SettingsPreviewController extends ChangeNotifier {
     'pref_use_24_hour_clock': SettingsPreviewScene.home,
     'pref_navbar_position': SettingsPreviewScene.home,
     'pref_bottom_navbar_style': SettingsPreviewScene.home,
+    'pref_top_navbar_style': SettingsPreviewScene.home,
+    'pref_sidebar_style': SettingsPreviewScene.home,
     'pref_navbar_always_expanded': SettingsPreviewScene.home,
     'pref_show_shuffle_button': SettingsPreviewScene.home,
     'pref_show_genres_button': SettingsPreviewScene.home,
@@ -229,6 +231,8 @@ class SettingsPreviewController extends ChangeNotifier {
     'pref_library_card_titles': SettingsPreviewScene.library,
     'pref_use_detailed_sub_headings': SettingsPreviewScene.library,
     'pref_hide_backdrops_in_libraries': SettingsPreviewScene.library,
+    'pref_hide_library_watch_progress': SettingsPreviewScene.library,
+    'pref_hide_library_unwatched_count': SettingsPreviewScene.library,
     'pref_music_library_style': SettingsPreviewScene.library,
     'pref_book_library_style': SettingsPreviewScene.library,
   };

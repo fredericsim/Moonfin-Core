@@ -14,6 +14,7 @@ import 'package:moonfin/auth/models/server.dart';
 import 'package:moonfin/auth/models/server_addition_state.dart';
 import 'package:moonfin/auth/repositories/server_repository.dart';
 import 'package:moonfin/auth/repositories/session_repository.dart';
+import 'package:moonfin/auth/services/server_discovery_service.dart';
 import 'package:moonfin/auth/store/authentication_preferences.dart';
 import 'package:moonfin/auth/store/authentication_store.dart';
 import 'package:moonfin/data/services/media_server_client_factory.dart';
@@ -37,11 +38,16 @@ class _Client extends Mock implements MediaServerClient {}
 
 class _Users extends Mock implements UsersApi {}
 
+class _Discovery extends Fake implements ServerDiscoveryService {
+  @override
+  Stream<DiscoveredServer> discoverLocalServers() => const Stream.empty();
+}
+
 void main() {
   final server = Server(
     id: 'hosted-server',
     name: 'Hosted Jellyfin',
-    address: 'https://media.example.com',
+    address: Uri.base.origin,
     version: '12.2.0',
     serverType: ServerType.jellyfin,
     dateAdded: DateTime(2026),
@@ -63,7 +69,6 @@ void main() {
     ThemeRegistry.setActiveById(ThemeRegistry.moonfinId);
     runtime.webRuntimeConfig = WebRuntimeConfig.fromJson({
       'pluginMode': true,
-      'forcedServerUrl': server.address,
       'enableWebRtcScan': false,
     });
     web.window.localStorage.clear();
@@ -114,19 +119,12 @@ void main() {
   });
 
   Future<GoRouter> open(WidgetTester tester) async {
-    final reportError = FlutterError.onError;
-    FlutterError.onError = (details) {
-      // Surface browser framework errors through the test runner as well.
-      print(details.exceptionAsString());
-      reportError?.call(details);
-    };
-    addTearDown(() => FlutterError.onError = reportError);
     final router = GoRouter(
       initialLocation: Destinations.serverSelect,
       routes: [
         GoRoute(
           path: Destinations.serverSelect,
-          builder: (_, _) => const ServerSelectScreen(),
+          builder: (_, _) => ServerSelectScreen(discoveryService: _Discovery()),
         ),
         GoRoute(
           path: Destinations.server,
@@ -141,10 +139,7 @@ void main() {
       ],
     );
     addTearDown(router.dispose);
-    addTearDown(() async {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(seconds: 2));
-    });
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(
       MaterialApp.router(
         routerConfig: router,
@@ -156,13 +151,20 @@ void main() {
     return router;
   }
 
+  Future<void> finishConnection(WidgetTester tester, Server? result) async {
+    await tester.runAsync(() async {
+      connection.complete(result);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('a fresh browser proceeds to sign-in after adding the host', (
     tester,
   ) async {
     final router = await open(tester);
     expect(saved, isEmpty);
-    connection.complete(server);
-    await tester.pumpAndSettle();
+    await finishConnection(tester, server);
     expect(
       router.routeInformationProvider.value.uri.queryParameters['serverId'],
       server.id,
@@ -183,8 +185,7 @@ void main() {
     tester,
   ) async {
     final router = await open(tester);
-    connection.complete(null);
-    await tester.pump(const Duration(seconds: 2));
+    await finishConnection(tester, null);
     expect(
       router.routeInformationProvider.value.uri.path,
       Destinations.serverSelect,
@@ -203,8 +204,7 @@ void main() {
     final router = await open(tester);
     router.go(Destinations.home);
     await tester.pumpAndSettle();
-    connection.complete(server);
-    await tester.pumpAndSettle();
+    await finishConnection(tester, server);
     expect(find.text('Signed in'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -236,8 +236,7 @@ void main() {
       }),
     );
     await open(tester);
-    connection.complete(server);
-    await tester.pumpAndSettle();
+    await finishConnection(tester, server);
     expect(find.text('Signed in'), findsOneWidget);
     verify(
       () => session.switchCurrentSession(serverId: server.id, userId: 'user'),

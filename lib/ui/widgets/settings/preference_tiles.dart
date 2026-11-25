@@ -41,6 +41,13 @@ Widget withBackClose(BuildContext dialogContext, Widget child) {
         skipTraversal: true,
         onKeyEvent: (_, event) {
           if (!event.logicalKey.isBackKey) return KeyEventResult.ignored;
+          // A focused text field owns backspace, so it deletes rather than closes.
+          if (event.logicalKey == LogicalKeyboardKey.backspace &&
+              FocusManager.instance.primaryFocus?.context
+                      ?.findAncestorWidgetOfExactType<EditableText>() !=
+                  null) {
+            return KeyEventResult.ignored;
+          }
           if (event is KeyDownEvent || event is KeyUpEvent) {
             closeDialog();
             return KeyEventResult.handled;
@@ -533,7 +540,10 @@ class _EnumPreferenceTileState<T extends Enum>
         title: widget.title,
         description: widget.description,
         options: [for (final v in values) widget.labelOf(v)],
-        currentIndex: () => values.indexOf(_binding.value),
+        // A value the tile no longer offers reads as its first option.
+        currentIndex: () => values.contains(_binding.value)
+            ? values.indexOf(_binding.value)
+            : 0,
       ),
       child: _buildTile(context, values),
     );

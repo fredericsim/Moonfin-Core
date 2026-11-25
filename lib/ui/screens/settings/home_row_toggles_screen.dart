@@ -14,6 +14,7 @@ import '../../../preference/user_preferences.dart';
 import '../../widgets/adaptive/adaptive_list_section.dart';
 import '../../widgets/settings/clean_settings_typography.dart';
 import '../../widgets/focus/request_initial_focus.dart';
+import '../../widgets/local_search_field.dart';
 import '../../widgets/settings/preference_tiles.dart';
 import '../detail/playlist_sort_filter_bar.dart';
 import '../../../util/signed_in_server_features.dart';
@@ -369,6 +370,10 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
     final sinceYouWatchedSource = _prefs.get(UserPreferences.sinceYouWatchedSource);
     final showRewatchRow = _prefs.get(UserPreferences.displayRewatchRow);
     final showStudiosRows = _prefs.get(UserPreferences.displayStudiosRows);
+    final studiosPicked = _prefs
+        .get(UserPreferences.studiosRowSelectedIds)
+        .split(',')
+        .any((id) => id.trim().isNotEmpty);
 
     return RequestInitialFocus(
       child: withCleanSettingsTypography(
@@ -807,7 +812,13 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                       title: l10n.studiosRowSorting,
                       description: l10n.studiosRowSortingDescription,
                       icon: Icons.sort_by_alpha,
-                      values: LibrarySortBy.itemsApiValues,
+                      // A studio carries no runtime, ratings or play data, and
+                      // with none picked only name and random order apply.
+                      values: [
+                        LibrarySortBy.name,
+                        if (studiosPicked) LibrarySortBy.dateAdded,
+                        LibrarySortBy.random,
+                      ],
                       labelOf: (v) => librarySortLabel(v, l10n),
                       onChanged: _onStudiosSortChanged,
                     ),
@@ -972,6 +983,9 @@ class _StudioSelectionDialogState extends State<StudioSelectionDialog> {
   bool _showSelected = true;
   bool _showUnselected = true;
 
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -982,6 +996,13 @@ class _StudioSelectionDialogState extends State<StudioSelectionDialog> {
           .where((s) => s.isNotEmpty),
     );
     _fetchStudios();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchStudios() async {
@@ -1067,7 +1088,9 @@ class _StudioSelectionDialogState extends State<StudioSelectionDialog> {
   }
 
   List<Map<String, dynamic>> get _filteredStudios {
+    final query = _searchController.text.trim().toLowerCase();
     return _allStudios.where((s) {
+      if (!(s['name'] as String).toLowerCase().contains(query)) return false;
       final id = s['id'] as String;
       final isSelected = _selectedIds.contains(id);
       final hasMovie = s['hasMovie'] as bool;
@@ -1133,6 +1156,13 @@ class _StudioSelectionDialogState extends State<StudioSelectionDialog> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  LocalSearchField(
+                                    controller: _searchController,
+                                    focusNode: _searchFocus,
+                                    hint: l10n.searchEllipsis,
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                  const SizedBox(height: 8),
                                   Padding(
                                     padding: const EdgeInsets.only(bottom: 8),
                                     child: Text(
