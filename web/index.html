@@ -50,6 +50,21 @@
       justify-content: center;
     }
 
+    .moonfin-loader__spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #00a4dc;
+      border-radius: 50%;
+      animation: moonfin-spinner-spin 800ms linear infinite;
+    }
+
+    html:not([data-moonfin-loading-logo="true"]) .moonfin-loader__logo-wrap,
+    html:not([data-moonfin-loading-logo="true"]) .moonfin-loader__label,
+    html[data-moonfin-loading-logo="true"] .moonfin-loader__spinner {
+      display: none;
+    }
+
     .moonfin-loader__logo-wrap {
       width: 160px;
       height: 160px;
@@ -91,6 +106,12 @@
       }
       to {
         transform: rotateY(360deg);
+      }
+    }
+
+    @keyframes moonfin-spinner-spin {
+      to {
+        transform: rotate(360deg);
       }
     }
 
@@ -217,6 +238,7 @@
 <body>
   <div id="moonfin-loader" aria-hidden="true">
     <div class="moonfin-loader__content">
+      <div class="moonfin-loader__spinner"></div>
       <div class="moonfin-loader__logo-wrap">
         <img
           class="moonfin-loader__logo"

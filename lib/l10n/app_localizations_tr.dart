@@ -1961,6 +1961,15 @@ class AppLocalizationsTr extends AppLocalizations {
   String get carServerUnreachable => 'Sunucuya erişilemiyor';
 
   @override
+  String get carListenNow => 'Listen Now';
+
+  @override
+  String get carRecentlyPlayed => 'Recently Played';
+
+  @override
+  String get carInstantMix => 'Instant Mix';
+
+  @override
   String downloadsCount(int count) {
     return '$count indirme';
   }
@@ -3545,6 +3554,16 @@ class AppLocalizationsTr extends AppLocalizations {
   String get playerRecroppingBlackBars => 'Siyah çubuklar yeniden kırpılıyor';
 
   @override
+  String get playerBlackBarsCropped => 'Siyah bantlar kırpıldı';
+
+  @override
+  String get playerNoBlackBarsFound => 'Siyah bantlar bulunamadı';
+
+  @override
+  String get playerBlackBarsNotDetected =>
+      'Siyah bantlar tespit edilemedi. Daha aydınlık bir sahnede yeniden deneyin';
+
+  @override
   String get stretch => 'Uzat';
 
   @override
@@ -4828,6 +4847,29 @@ class AppLocalizationsTr extends AppLocalizations {
       'Bağlı tüm sunuculardaki kitaplıkları göster';
 
   @override
+  String get mergeLibrariesByType =>
+      'Filmler ve Diziler Kütüphanelerini Birleştir';
+
+  @override
+  String get mergeLibrariesByTypeDescription =>
+      'Çoklu sunucu kütüphaneleri açıkken tüm sunucular için tek bir Filmler ve Diziler kütüphanesi gösterilir. Birden fazla sunucudaki ortak içerikler tek sefer listelenir.';
+
+  @override
+  String mergedServerCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count sunucuda',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mergedCopiesNotChanged(String servers) {
+    return '$servers üzerinde değiştirilmedi';
+  }
+
+  @override
   String get recentlyAddedAndReleased => 'Son Eklenenler ve Son Yayınlananlar';
 
   @override
@@ -5077,17 +5119,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get mediaBarSourceRandom => 'Rastgele';
 
   @override
-  String get mediaBarSourceNewReleases => 'Yeni Sezonlar ve Bölümler';
-
-  @override
   String get mediaBarNewReleaseBanner => 'Yeni Yayın Bandı';
-
-  @override
-  String get mediaBarNewReleaseBannerDescription =>
-      'Yakın zamanda yeni sezonu veya yeni bölümleri yayınlanan dizileri işaretle.';
-
-  @override
-  String get mediaBarNewReleaseDays => 'Yeni Yayın Süresi';
 
   @override
   String get mediaBarNewReleaseDaysDescription =>
@@ -5101,6 +5133,39 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get mediaBarNewEpisodes => 'Yeni Bölümler';
+
+  @override
+  String get mediaBarNewMovie => 'Yeni Film';
+
+  @override
+  String get mediaBarNewReleasesSection => 'Yeni Çıkanlar';
+
+  @override
+  String get mediaBarSourceNewReleasesAll => 'Yeni Çıkanlar';
+
+  @override
+  String get mediaBarNewReleaseBannerAllDescription =>
+      'Yeni dizileri, sezonları, bölümleri ve filmleri işaretle.';
+
+  @override
+  String get mediaBarNewReleaseKinds => 'Etiketler';
+
+  @override
+  String get mediaBarNewEpisodeDays => 'Yeni Bölüm Penceresi';
+
+  @override
+  String get mediaBarNewMovieDays => 'Yeni Film Penceresi';
+
+  @override
+  String get mediaBarNewMovieDaysDescription =>
+      'Bir filmin çıktıktan sonra ne kadar süre yeni kalacağı. Sinema filmleri sunuculara genellikle vizyona girdikten bir süre sonra ulaşır; bu nedenle bölümlerden daha uzun bir süre belirleyin.';
+
+  @override
+  String get mediaBarNewMovieDetail => 'Sloganı Göster';
+
+  @override
+  String get mediaBarNewMovieDetailDescription =>
+      'Yeni Film etiketinin altında filmin sloganını göster. Slogan yoksa etiket tek başına kalır.';
 
   @override
   String get moviesAndTvShows => 'Filmler ve TV Programları';
@@ -5752,6 +5817,48 @@ class AppLocalizationsTr extends AppLocalizations {
       'Sunucu kütüphanesine eklenen yeni içerikler';
 
   @override
+  String get seerrTestNotification => 'Send Test Notification';
+
+  @override
+  String get seerrTestNotificationDesc =>
+      'Verify in-app and background push delivery';
+
+  @override
+  String seerrTestNotificationSentBody(num count) {
+    final intl.NumberFormat countNumberFormat = intl.NumberFormat.compact(
+      locale: localeName,
+    );
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString devices',
+      one: '1 device',
+    );
+    return 'Dispatched to $_temp0.';
+  }
+
+  @override
+  String get seerrTestNotificationPushDisabled =>
+      'In-app notification sent. Server push is not enabled.';
+
+  @override
+  String get seerrTestNotificationFailed => 'Failed to send test notification';
+
+  @override
+  String get seerrPushServerStatus => 'Server Push';
+
+  @override
+  String get seerrPushDeviceStatus => 'Device Push';
+
+  @override
+  String get seerrPushDeviceRegistered => 'Registered';
+
+  @override
+  String get seerrPushDeviceNotRegistered => 'Not registered';
+
+  @override
   String loggedInAs(String username) {
     return '$username olarak oturum açıldı';
   }
@@ -5947,6 +6054,27 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get seerrNotFoundYet => 'Henüz bulunamadı';
+
+  @override
+  String get seerrSearchingIndexers => 'Dizinleyicilerde aranıyor';
+
+  @override
+  String seerrNotFoundYetSearched(String when) {
+    return 'Henüz bulunamadı · $when arandı';
+  }
+
+  @override
+  String get seerrNotAvailableYet => 'Henüz mevcut değil';
+
+  @override
+  String seerrAvailableOn(String date) {
+    return '$date tarihinde mevcut';
+  }
+
+  @override
+  String seerrNextEpisodeOn(String date) {
+    return 'Sonraki bölüm: $date';
+  }
 
   @override
   String get seerrGetDifferentRelease => 'Farklı bir sürüm al';
@@ -11632,6 +11760,17 @@ class AppLocalizationsTr extends AppLocalizations {
   @override
   String get playerTooltipExitFloatOnTop =>
       'Her zaman üstte tutmayı devre dışı bırak';
+
+  @override
+  String get playerTooltipPictureInPicture => 'Pencere içinde pencere';
+
+  @override
+  String get playerTooltipExitPictureInPicture =>
+      'Pencere içinde pencereden çık';
+
+  @override
+  String get playerPlayingInPictureInPicture =>
+      'Pencere içinde pencere modunda oynatılıyor';
 
   @override
   String get playerTooltipLockLandscape => 'Yatay moda kilitle';
@@ -18243,6 +18382,19 @@ class AppLocalizationsTr extends AppLocalizations {
       'Sol ve Sağ kaydırıcıyı hareket ettirir.';
 
   @override
+  String get remoteMediaNotificationTitle => 'Uzaktan oynatma bildirimi';
+
+  @override
+  String get remoteMediaNotificationSubtitle =>
+      'Başka bir cihazda izlerken sistem medya kontrollerini göster';
+
+  @override
+  String get remoteActivityWatching => 'Moonfin üzerinden izleniyor';
+
+  @override
+  String get remoteActivityListening => 'Moonfin üzerinden dinleniyor';
+
+  @override
   String get clickpadSeeking => 'Clickpad ile İleri/Geri Sarmaya İzin Ver';
 
   @override
@@ -18254,4 +18406,65 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get clickpadSeekingPausedOnly => 'Yalnızca duraklatılmışken';
+
+  @override
+  String get topNavbarStyle => 'Top Bar Style';
+
+  @override
+  String get topNavbarStyleClassic => 'Classic';
+
+  @override
+  String get topNavbarStyleTabline => 'Tabline';
+
+  @override
+  String get topNavbarStyleAtlas => 'Atlas';
+
+  @override
+  String get topNavbarStyleClassicHint => 'The standard bar';
+
+  @override
+  String get topNavbarStyleTablineHint =>
+      'Text tabs with an underline, no pill';
+
+  @override
+  String get topNavbarStyleAtlasHint =>
+      'Tabs open a panel with shortcuts and artwork';
+
+  @override
+  String get sidebarStyle => 'Sidebar Style';
+
+  @override
+  String get sidebarStyleClassic => 'Classic';
+
+  @override
+  String get sidebarStyleReel => 'Reel';
+
+  @override
+  String get sidebarStyleMosaic => 'Mosaic';
+
+  @override
+  String get sidebarStyleClassicHint => 'The standard sidebar';
+
+  @override
+  String get sidebarStyleReelHint =>
+      'A wheel that turns through the destinations';
+
+  @override
+  String get sidebarStyleMosaicHint => 'A panel of tiles with library artwork';
+
+  @override
+  String navContinueIn(String section) {
+    return 'Continue in $section';
+  }
+
+  @override
+  String navFeatured(String title) {
+    return 'Featured: $title';
+  }
+
+  @override
+  String get navOpenMenu => 'Open menu';
+
+  @override
+  String get navReelSwipeHint => 'Swipe to turn it, tap the middle to go';
 }

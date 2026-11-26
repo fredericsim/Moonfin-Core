@@ -196,8 +196,12 @@ class Destinations {
   }
 
   static String libraryView(String libraryId) => '/library-view/$libraryId';
-  static String libraryGenresOf(String libraryId) =>
-      '/library/$libraryId/genres';
+  static String libraryGenresOf(String libraryId, {String? serverId}) {
+    final base = '/library/$libraryId/genres';
+    return serverId != null && serverId.isNotEmpty
+        ? '$base?serverId=${Uri.encodeQueryComponent(serverId)}'
+        : base;
+  }
   static String libraryLettersOf(String libraryId) =>
       '/library/$libraryId/letters';
   static String librarySuggestionsOf(String libraryId) =>

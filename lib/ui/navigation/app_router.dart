@@ -342,7 +342,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: Destinations.search,
       builder: (context, state) => SearchScreen(
-        key: state.extra is RemoteSearchSession ? ObjectKey(state.extra) : null,
+        // A link to search while it's open reuses this page, so the URI key
+        // gives the screen a fresh state that reads the new query.
+        key: state.extra is RemoteSearchSession
+            ? ObjectKey(state.extra)
+            : ValueKey(state.uri.toString()),
         remoteSearch: state.extra is RemoteSearchSession
             ? state.extra as RemoteSearchSession
             : null,
@@ -374,7 +378,10 @@ final appRouter = GoRouter(
           path: 'genres',
           builder: (context, state) {
             final libraryId = state.pathParameters['libraryId']!;
-            return LibraryGenresScreen(libraryId: libraryId);
+            return LibraryGenresScreen(
+              libraryId: libraryId,
+              serverId: state.uri.queryParameters['serverId'],
+            );
           },
         ),
         GoRoute(

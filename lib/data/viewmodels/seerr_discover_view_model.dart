@@ -549,14 +549,19 @@ class SeerrDiscoverViewModel extends ChangeNotifier {
 
   List<SeerrDiscoverItem> _filterItems(List<SeerrDiscoverItem> items) {
     final blockNsfw = _prefs.blockNsfw;
-    return items.where((item) {
-      if (item.isAvailable || item.isBlacklisted) return false;
-      if (blockNsfw && _isNsfw(item)) return false;
-      return true;
-    }).toList();
+    return items
+        .where((item) => isVisibleInDiscover(item, blockNsfw: blockNsfw))
+        .toList();
   }
 
-  bool _isNsfw(SeerrDiscoverItem item) => isNsfw(item);
+  /// Shared with previews so every entry point honors Discover's filters.
+  static bool isVisibleInDiscover(
+    SeerrDiscoverItem item, {
+    required bool blockNsfw,
+  }) =>
+      !item.isAvailable &&
+      !item.isBlacklisted &&
+      (!blockNsfw || !isNsfw(item));
 
   /// Whether [item] is adult content, by TMDB's flag or by a title or
   /// overview that trips the keyword list. Shared with the other Seerr

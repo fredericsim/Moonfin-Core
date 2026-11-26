@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get_it/get_it.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:moonfin/data/models/live_tv_recording_state.dart';
 import 'package:moonfin/data/services/user_data_sync.dart';
@@ -112,11 +113,15 @@ void main() {
   setUp(() {
     userDataSync.reset();
     client = _MockClient();
+    when(() => client.baseUrl).thenReturn('http://server');
+    GetIt.instance.registerSingleton<MediaServerClient>(client);
     liveTv = _MockLiveTvApi();
     when(() => client.liveTvApi).thenReturn(liveTv);
     when(() => client.userId).thenReturn('user');
     when(() => _guide(liveTv)).thenAnswer((_) async => {'Items': <dynamic>[]});
   });
+
+  tearDown(() => GetIt.instance.reset());
 
   test('Plex leaves out the genre filters its programs never carry', () {
     when(() => client.serverType).thenReturn(ServerType.plex);

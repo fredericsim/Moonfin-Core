@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../platform/web_runtime_config.dart';
 import '../../../preference/preference_constants.dart';
 
 /// Extension helpers to map loading animation enums to layout properties.
@@ -209,7 +210,11 @@ class LoadingAnimationWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return switch (image) {
+    final effectiveImage = image == LoadingAnimationImage.moonfinLogo &&
+            !webRuntimeConfig.showLoadingLogo
+        ? LoadingAnimationImage.spinner
+        : image;
+    return switch (effectiveImage) {
       LoadingAnimationImage.none => const SizedBox.shrink(),
       LoadingAnimationImage.moonfinLogo => MoonfinLogoAnimation(
           size: size,

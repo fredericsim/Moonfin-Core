@@ -7,6 +7,14 @@ class WebRuntimeConfig {
   final bool pluginMode;
   final String? forcedServerUrl;
 
+  /// Keep branded loading screens opt-in, including stored logo preferences.
+  final bool showLoadingLogo;
+
+  static const _defaultShowLoadingLogo = bool.fromEnvironment(
+    'MOONFIN_SHOW_LOADING_LOGO',
+    defaultValue: false,
+  );
+
   const WebRuntimeConfig({
     required this.schemaVersion,
     required this.defaultServerUrl,
@@ -15,6 +23,7 @@ class WebRuntimeConfig {
     required this.brandingName,
     required this.pluginMode,
     required this.forcedServerUrl,
+    this.showLoadingLogo = _defaultShowLoadingLogo,
   });
 
   static const defaults = WebRuntimeConfig(
@@ -37,11 +46,13 @@ class WebRuntimeConfig {
       schemaVersion: _readInt(json['schemaVersion']) ?? defaults.schemaVersion,
       defaultServerUrl: defaultServerUrl,
       discoveryProxyUrl: discoveryProxyUrl,
-      enableWebRtcScan: _readBool(json['enableWebRtcScan']) ??
-          defaults.enableWebRtcScan,
+      enableWebRtcScan:
+          _readBool(json['enableWebRtcScan']) ?? defaults.enableWebRtcScan,
       brandingName: brandingName ?? defaults.brandingName,
       pluginMode: _readBool(json['pluginMode']) ?? defaults.pluginMode,
       forcedServerUrl: forcedServerUrl,
+      showLoadingLogo:
+          _readBool(json['showLoadingLogo']) ?? defaults.showLoadingLogo,
     );
   }
 

@@ -9,7 +9,7 @@ class ItemMutationRepository {
 
   ItemMutationRepository(this._client);
 
-  static final _favoriteSyncs = <String, Future<void>>{};
+  static final _favoriteSyncs = <(int, String, String), Future<void>>{};
 
   /// Shows [isFavorite] at once, then brings the server to the newest choice
   /// one request at a time, so a quick run of toggles ends where the user
@@ -19,9 +19,10 @@ class ItemMutationRepository {
   /// what the server holds throw, so a caller undoing its own toggle on error
   /// lands on the server's value whichever order the callers run in.
   Future<void> setFavorite(String itemId, {required bool isFavorite}) async {
-    userDataSync.requestFavorite(itemId, isFavorite);
+    final serverId = _client.baseUrl;
+    userDataSync.requestFavorite(itemId, isFavorite, serverId: serverId);
     final session = userDataSync.session;
-    final key = '$session:$itemId';
+    final key = (session, serverId, itemId);
     try {
       await (_favoriteSyncs[key] ??= _syncFavorite(itemId, session, key));
     } on _FavoriteSyncFailure catch (failure) {
@@ -30,15 +31,28 @@ class ItemMutationRepository {
     }
   }
 
-  Future<void> _syncFavorite(String itemId, int session, String key) async {
+  Future<void> _syncFavorite(
+    String itemId,
+    int session,
+    (int, String, String) key,
+  ) async {
+    final serverId = key.$2;
     try {
       // Lets setFavorite store this run before it can finish and remove it.
       await Future<void>.value();
       while (userDataSync.session == session) {
-        final wanted = userDataSync.pendingFavorite(itemId);
+        final wanted = userDataSync.pendingFavorite(
+          itemId,
+          serverId: serverId,
+        );
         if (wanted == null) return;
-        if (wanted == userDataSync.confirmedFavorite(itemId)) {
-          userDataSync.confirmFavorite(itemId, wanted);
+        if (wanted ==
+            userDataSync.confirmedFavorite(itemId, serverId: serverId)) {
+          userDataSync.confirmFavorite(
+            itemId,
+            wanted,
+            serverId: serverId,
+          );
           return;
         }
         try {
@@ -49,12 +63,17 @@ class ItemMutationRepository {
           }
         } catch (error, stackTrace) {
           if (userDataSync.session != session) return;
-          final confirmed = userDataSync.confirmedFavorite(itemId) ?? !wanted;
-          userDataSync.failFavoriteChange(itemId);
+          final confirmed =
+              userDataSync.confirmedFavorite(
+                itemId,
+                serverId: serverId,
+              ) ??
+              !wanted;
+          userDataSync.failFavoriteChange(itemId, serverId: serverId);
           throw _FavoriteSyncFailure(error, stackTrace, confirmed: confirmed);
         }
         if (userDataSync.session != session) return;
-        userDataSync.confirmFavorite(itemId, wanted);
+        userDataSync.confirmFavorite(itemId, wanted, serverId: serverId);
       }
     } finally {
       _favoriteSyncs.remove(key);
@@ -62,21 +81,25 @@ class ItemMutationRepository {
   }
 
   Future<void> setPlayed(String itemId, {required bool isPlayed}) async {
+    final session = userDataSync.session;
     if (isPlayed) {
       await _client.userLibraryApi.markPlayed(itemId);
+      if (userDataSync.session != session) return;
       final prefs = GetIt.instance<UserPreferences>();
       await prefs.setItemSubtitleStreamIndex(itemId, null);
+      if (userDataSync.session != session) return;
       await prefs.setItemAudioStreamIndex(itemId, null);
     } else {
       await _client.userLibraryApi.unmarkPlayed(itemId);
     }
+    if (userDataSync.session != session) return;
     // Either way the server drops the resume point, so say so here too rather
     // than leave a progress bar under a watched tick.
     userDataSync.publish(itemId, {
       'Played': isPlayed,
       'PlayedPercentage': null,
       'PlaybackPositionTicks': 0,
-    });
+    }, serverId: _client.baseUrl);
   }
 
   /// Asks the server to drop [itemId] from its resume list, leaving the played
@@ -92,7 +115,7 @@ class ItemMutationRepository {
 
   Future<void> setRating(String itemId, {required bool likes}) async {
     await _client.userLibraryApi.updateUserRating(itemId, likes: likes);
-    userDataSync.publish(itemId, {'Likes': likes});
+    userDataSync.publish(itemId, {'Likes': likes}, serverId: _client.baseUrl);
   }
 
   Future<void> setNumericRating(String itemId, {required double rating}) async {
@@ -100,15 +123,21 @@ class ItemMutationRepository {
       itemId,
       rating: rating,
     );
-    userDataSync.publish(itemId, {'Rating': rating});
+    userDataSync.publish(itemId, {'Rating': rating}, serverId: _client.baseUrl);
   }
 
   Future<void> clearRating(String itemId) async {
     await _client.userLibraryApi.deleteUserRating(itemId);
-    userDataSync.publish(itemId, {'Rating': null, 'Likes': null});
+    userDataSync.publish(itemId, {
+      'Rating': null,
+      'Likes': null,
+    }, serverId: _client.baseUrl);
   }
 
-  Future<void> addToCollection(String collectionId, List<String> itemIds) async {
+  Future<void> addToCollection(
+    String collectionId,
+    List<String> itemIds,
+  ) async {
     await _client.itemsApi.addToCollection(collectionId, itemIds);
   }
 
@@ -124,7 +153,8 @@ class ItemMutationRepository {
     bool? recursive,
     bool? replaceAllMetadata,
     bool? replaceAllImages,
-    MetadataRefreshMode metadataRefreshMode = MetadataRefreshMode.defaultRefresh,
+    MetadataRefreshMode metadataRefreshMode =
+        MetadataRefreshMode.defaultRefresh,
     MetadataRefreshMode imageRefreshMode = MetadataRefreshMode.defaultRefresh,
   }) async {
     await _client.adminItemsApi.refreshItem(

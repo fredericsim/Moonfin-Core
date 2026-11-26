@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:moonfin_design/moonfin_design.dart';
-import 'package:server_core/server_core.dart';
+import 'package:server_core/server_core.dart' hide ImageType;
 
 import '../../../auth/repositories/user_repository.dart';
 import '../../../data/models/aggregated_item.dart';
@@ -44,10 +44,18 @@ import '../../widgets/bounded_network_image.dart';
 import '../../widgets/carousel_panel.dart';
 import '../../widgets/downloads_nav_slot.dart';
 import '../../widgets/friends_nav_slot.dart';
+import '../../widgets/home_row_spacing.dart';
 import '../../widgets/info_area.dart';
 import '../../widgets/poster_badges.dart';
+import '../../widgets/mediabar/makd_classic.dart';
 import '../../widgets/mediabar/gallery_glow.dart';
 import '../../widgets/mediabar/media_bar_new_release_label.dart';
+import '../../widgets/left_sidebar.dart';
+import '../../widgets/modern_row.dart';
+import '../../widgets/nav_styles/mosaic_nav.dart';
+import '../../widgets/nav_styles/nav_button_style.dart';
+import '../../widgets/nav_styles/nav_entry.dart';
+import '../../widgets/nav_styles/reel_nav.dart';
 import '../../widgets/rating_display.dart';
 import '../../widgets/seerr_icons.dart';
 import '../../widgets/settings/settings_preview_scope.dart';
@@ -247,7 +255,7 @@ double _desktopScale(BuildContext context) =>
 double _rowScale(BuildContext context) =>
     (_tv ? 0.8 : 1.0) * _desktopScale(context);
 
-double get _rowLeftInset => _phone ? 16 : (_tv ? 80 : 32);
+double get _rowLeftInset => _phone ? 16 : (_tv ? tvTopNavbarRowInset + 32 : 32);
 
 /// Lays [child] out at the platform design size, then scales it into the card.
 Widget _screen(Widget child) {
@@ -437,10 +445,12 @@ Widget mediaBarPreview(String mode) => _liveOrFallback(
             child: _homeRowsColumn(
               context,
               items,
-              modern: previewValue(
-                context,
-                UserPreferences.homeRowsStyle,
-              ).usesModernCards,
+              modern:
+                  !_phone &&
+                  previewValue(
+                    context,
+                    UserPreferences.homeRowsStyle,
+                  ).usesModernCards,
               infoArea: false,
             ),
           ),
@@ -543,18 +553,16 @@ Widget _titleWithRelease(
   );
 }
 
-/// On phones the bar takes 55 percent of the screen (46 for makd) and the
-/// rows carry on beneath, which is exactly what the preview shows too.
+/// On phones the bar takes 55 percent of the screen and the rows carry on
+/// beneath, which is exactly what the preview shows too.
 Widget _phoneBarScreen(
   BuildContext context,
   List<MediaBarSlideItem> items,
-  Widget bar, {
-  double barFraction = 0.55,
-}) {
-  final height = _designSize().height * barFraction;
+  Widget bar,
+) {
   return Column(
     children: [
-      SizedBox(height: height, child: bar),
+      SizedBox(height: _designSize().height * 0.55, child: bar),
       Expanded(
         child: ClipRect(
           child: OverflowBox(
@@ -787,239 +795,58 @@ Widget _moonfinBar(
   return _phone ? _phoneBarScreen(context, items, bar) : bar;
 }
 
+/// The real MakD widgets at the preview's size, above a peeking first row.
 Widget _makdBar(
   BuildContext context,
-  List<MediaBarSlideItem> items, [
-  double rowPeek = 0,
-]) {
+  List<MediaBarSlideItem> items,
+  double rowPeek,
+) {
   final item = items.first;
-  final overlay = _overlayColor(context);
-  final op = _overlayOpacity(context);
   final size = _designSize();
-  final l10n = AppLocalizations.of(context);
-
-  if (_phone) {
-    final barHeight = size.height * 0.46;
-    final bar = Stack(
+  final m = MakdMetrics(size, rowPeek: rowPeek);
+  final ratings = UserPreferences.mediaBarRatings;
+  return ClipRect(
+    child: Stack(
       fit: StackFit.expand,
       children: [
-        _artwork(item.backdropUrl),
-        ColoredBox(color: AppColorScheme.scrim.withValues(alpha: 0.26)),
-        Align(
-          alignment: const Alignment(0, -0.1),
-          child: _titleWithRelease(
-            item,
-            _logoOrTitle(
-              item,
-              width: (size.width * 0.7).clamp(190.0, 380.0),
-              height: (barHeight * 0.18).clamp(58.0, 112.0),
-              alignment: Alignment.center,
-              fallbackStyle: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: AppColorScheme.onSurface,
-                shadows: _textShadows,
-              ),
-            ),
-            center: true,
-          ),
+        _artwork(item.backdropUrl, alignment: const Alignment(0, -0.6)),
+        MakdWash(
+          flat: m.touchPortrait,
+          color: _overlayColor(context),
+          opacity: _overlayOpacity(context),
         ),
         Positioned(
-          left: 0,
-          right: 0,
-          bottom: 24,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _metadataWrap(item, alignment: WrapAlignment.center),
-                const SizedBox(height: 6),
-                _sampleRatings(context, item, UserPreferences.mediaBarRatings),
-                const SizedBox(height: 14),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _makdPlayButton(l10n, compact: true),
-                    const SizedBox(width: 10),
-                    _makdInfoButton(36, 18),
-                  ],
-                ),
-              ],
+          left: m.touchPortrait ? (m.w - m.contentWidth) / 2 : m.gutter,
+          width: m.contentWidth,
+          bottom: size.height - m.contentBottom,
+          child: MakdContent(
+            item: item,
+            m: m,
+            ratings: _sampleScores,
+            enableAdditionalRatings: previewValue(
+              context,
+              ratings.additionalRatings,
             ),
+            enabledRatings: previewValue(context, ratings.sources),
+            use24Hour: previewValue(context, UserPreferences.use24HourClock),
+            isFavorite: item.isFavorite,
+            focused: _tv ? MakdButton.info : null,
+            onPressed: (_) {},
           ),
         ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 14,
-          child: Center(
-            child: _dots(
-              count: 5,
-              active: 9,
-              inactive: 7,
-              inactiveAlpha: 0.45,
-              gap: 5,
-            ),
+        if (items.length > 1)
+          Positioned(
+            left: m.touchPortrait ? 0 : null,
+            right: m.touchPortrait ? 0 : 0.03 * m.w,
+            bottom: size.height - m.dotsBottom,
+            child: m.touchPortrait
+                ? Center(child: MakdDots(count: items.length, current: 0, m: m))
+                : MakdDots(count: items.length, current: 0, m: m),
           ),
-        ),
       ],
-    );
-    return _phoneBarScreen(context, items, bar, barFraction: 0.46);
-  }
-
-  final contentWidth = (size.width * 0.42).clamp(280.0, 560.0);
-  return Stack(
-    fit: StackFit.expand,
-    children: [
-      _artwork(item.backdropUrl),
-      DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-            colors: [
-              overlay.withValues(alpha: op * 0.78),
-              overlay.withValues(alpha: op * 0.46),
-              overlay.withValues(alpha: op * 0.06),
-            ],
-            stops: const [0.0, 0.46, 1.0],
-          ),
-        ),
-      ),
-      DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              overlay.withValues(alpha: op * 0.12),
-              overlay.withValues(alpha: op * 0.28),
-              overlay.withValues(alpha: op * 0.78),
-            ],
-            stops: const [0.0, 0.48, 1.0],
-          ),
-        ),
-      ),
-      Positioned(
-        left: 50,
-        top: size.height * 0.22,
-        child: _titleWithRelease(
-          item,
-          _logoOrTitle(
-            item,
-            width: (size.width * 0.45).clamp(220.0, 640.0),
-            height: (size.height * 0.35).clamp(90.0, 300.0),
-            fallbackStyle: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              height: 1.05,
-              color: AppColorScheme.onSurface,
-              shadows: _textShadows,
-            ),
-          ),
-        ),
-      ),
-      Positioned(
-        left: 50,
-        bottom: 20 + rowPeek,
-        width: contentWidth,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _metadataWrap(item),
-            const SizedBox(height: 6),
-            _sampleRatings(context, item, UserPreferences.mediaBarRatings),
-            if (item.overview != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                item.overview!,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.38,
-                  color: AppColorScheme.onSurface.withValues(alpha: 0.88),
-                ),
-              ),
-            ],
-            if (!_tv) ...[
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  _makdPlayButton(l10n, compact: false),
-                  const SizedBox(width: 10),
-                  _makdInfoButton(46, 22),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-      Positioned(
-        right: 20,
-        bottom: 24 + rowPeek,
-        child: _dots(
-          count: 5,
-          active: 9,
-          inactive: 7,
-          inactiveAlpha: 0.45,
-          gap: 5,
-        ),
-      ),
-    ],
+    ),
   );
 }
-
-Widget _makdPlayButton(AppLocalizations l10n, {required bool compact}) =>
-    Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 14 : 18,
-        vertical: compact ? 7 : 10,
-      ),
-      decoration: BoxDecoration(
-        color: AppColorScheme.buttonFocused,
-        borderRadius: AppRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.play_arrow_rounded,
-            size: compact ? 20 : 24,
-            color: AppColorScheme.onButtonFocused,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            l10n.play,
-            style: TextStyle(
-              fontSize: compact ? 14 : 17,
-              fontWeight: FontWeight.w700,
-              color: AppColorScheme.onButtonFocused,
-            ),
-          ),
-        ],
-      ),
-    );
-
-Widget _makdInfoButton(double size, double iconSize) => Container(
-  width: size,
-  height: size,
-  decoration: BoxDecoration(
-    shape: BoxShape.circle,
-    color: AppColorScheme.onSurface.withValues(alpha: 0.18),
-    border: Border.all(
-      color: AppColorScheme.onSurface.withValues(alpha: 0.7),
-      width: 1.5,
-    ),
-  ),
-  child: Icon(
-    Icons.info_outline_rounded,
-    size: iconSize,
-    color: AppColorScheme.onSurface,
-  ),
-);
 
 Widget _bookshelfBar(BuildContext context, List<MediaBarSlideItem> items) {
   final bar = LayoutBuilder(
@@ -2056,9 +1883,13 @@ Widget settingsNavbarPreviewOver(Widget body) => _screen(
   ),
 );
 
+/// A panel button drops an Atlas panel.
+enum _NavRole { home, search, panel, settings, other }
+
 typedef _NavButton = ({
   Widget Function(double size, Color color) icon,
   String label,
+  _NavRole role,
 });
 
 bool get _seerrAvailable =>
@@ -2111,11 +1942,20 @@ List<_NavButton> _navButtons(
 ) {
   final l10n = AppLocalizations.of(context);
   bool on(Preference<bool> preference) => previewValue(context, preference);
-  _NavButton icon(IconData glyph, String label) => (
+  _NavButton icon(
+    IconData glyph,
+    String label, [
+    _NavRole role = _NavRole.other,
+  ]) => (
     icon: (size, color) => Icon(glyph, size: size, color: color),
     label: label,
+    role: role,
   );
-  _NavButton asset(String path, String label) => (
+  _NavButton asset(
+    String path,
+    String label, [
+    _NavRole role = _NavRole.other,
+  ]) => (
     icon: (size, color) => Image.asset(
       path,
       width: size,
@@ -2124,6 +1964,7 @@ List<_NavButton> _navButtons(
       fit: BoxFit.contain,
     ),
     label: label,
+    role: role,
   );
   final kids = on(UserPreferences.kidsModeEnabled);
   final libraries = !kids && on(UserPreferences.showLibrariesInToolbar);
@@ -2135,15 +1976,15 @@ List<_NavButton> _navButtons(
       ? GetIt.instance<SeerrPreferences>().labelOrDefault(l10n.seerr)
       : l10n.seerr;
   return [
-    icon(Icons.home_rounded, l10n.home),
-    icon(Icons.search_rounded, l10n.search),
+    icon(Icons.home_rounded, l10n.home, _NavRole.home),
+    icon(Icons.search_rounded, l10n.search, _NavRole.search),
     if (on(UserPreferences.showShuffleButton))
       icon(Icons.shuffle_rounded, l10n.shuffle),
     if (on(UserPreferences.showGenresButton))
       asset('assets/icons/genres.png', l10n.genres),
     if (on(UserPreferences.showFavoritesButton))
       icon(Icons.favorite_rounded, l10n.favorites),
-    if (liveTv) icon(Icons.live_tv_rounded, l10n.liveTv),
+    if (liveTv) icon(Icons.live_tv_rounded, l10n.liveTv, _NavRole.panel),
     if (!kids &&
         on(UserPreferences.syncPlayEnabled) &&
         on(UserPreferences.showSyncPlayButton))
@@ -2152,6 +1993,7 @@ List<_NavButton> _navButtons(
       (
         icon: (size, color) => SeerrIcon(size: size, color: color),
         label: seerrLabel,
+        role: _NavRole.panel,
       ),
     if (!kids && on(UserPreferences.showCalendarButton) && _calendarAvailable)
       icon(Icons.calendar_month_rounded, l10n.calendar),
@@ -2162,9 +2004,9 @@ List<_NavButton> _navButtons(
         liveTvButton: liveTv,
         kids: kids,
       ))
-        icon(glyph, label)
+        icon(glyph, label, _NavRole.panel)
     else if (libraries)
-      asset('assets/icons/clapperboard.png', l10n.libraries),
+      asset('assets/icons/clapperboard.png', l10n.libraries, _NavRole.panel),
     // The real Downloads and Messages buttons also wait for something saved
     // or posted. The preview leaves that out so their switches show a change.
     if (on(UserPreferences.showDownloadsButton) && _downloadsAvailable)
@@ -2173,7 +2015,7 @@ List<_NavButton> _navButtons(
       icon(Icons.people_alt_rounded, l10n.friends),
     if (on(UserPreferences.showServerMessagesButton))
       icon(Icons.info_outline_rounded, l10n.serverMessages),
-    icon(Icons.settings_rounded, l10n.settings),
+    icon(Icons.settings_rounded, l10n.settings, _NavRole.settings),
   ];
 }
 
@@ -2288,7 +2130,8 @@ Widget _navbarRows(
 
 /// The toolbar draws no band of its own. An avatar sits on the left, the
 /// buttons live in one translucent pill in the middle, and the clock keeps
-/// the right, all floating straight over the content.
+/// the right, all floating straight over the content. Tabline and Atlas lay
+/// the same buttons out their own way.
 Widget _topNavbarPreview(
   BuildContext context,
   List<MediaBarSlideItem> items, {
@@ -2301,107 +2144,236 @@ Widget _topNavbarPreview(
   final vPad = _tv ? 27.0 : (_phone ? 8.0 : 10.0);
   final buttonWidth = _phone ? 40.0 : (_tv ? 44.0 : 56.0);
   final iconSize = _phone ? 22.0 : (_tv ? 24.0 : 30.0);
+  final gap = _tv ? 2.0 : (_phone ? 8.0 : 12.0);
   final buttons = _navButtons(context, items);
   final expanded =
       !_phone && previewValue(context, UserPreferences.navbarAlwaysExpanded);
   final clock = _previewClock(context);
+  final clockText = clock == null
+      ? null
+      : Text(
+          clock,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: AppColorScheme.onSurface.withValues(alpha: 0.8),
+          ),
+        );
+  final style = previewValue(context, UserPreferences.topNavbarStyle);
 
-  // The real pill scrolls its buttons once they outgrow the room it's given,
-  // so the preview clips them where they'd scroll.
-  final pill = Container(
-    clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      color: _navbarSurface(context),
-      borderRadius: AppRadius.circular(36),
-    ),
+  // The real tabs scroll once they outgrow the bar, so they clip here.
+  Widget tabs(List<Widget> children) => Align(
+    alignment: AlignmentDirectional.centerStart,
     child: SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const NeverScrollableScrollPhysics(),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < buttons.length; i++)
-            if (expanded)
-              SizedBox(
-                height: buttonWidth,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      buttons[i].icon(iconSize, _navIconColor(i)),
-                      const SizedBox(width: 8),
-                      Text(
-                        buttons[i].label,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColorScheme.onSurface.withValues(
-                            alpha: 0.8,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              SizedBox(
-                width: buttonWidth,
-                height: buttonWidth,
-                child: Center(
-                  child: buttons[i].icon(iconSize, _navIconColor(i)),
-                ),
-              ),
-        ],
+        spacing: gap,
+        children: children,
       ),
     ),
   );
+  Widget iconButton(Widget icon) => SizedBox(
+    width: buttonWidth,
+    height: buttonWidth,
+    child: Center(child: icon),
+  );
 
-  final screen = Column(
-    children: [
-      SizedBox(
-        height: toolbarHeight,
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
-          child: Stack(
-            alignment: Alignment.center,
+  final Widget bar;
+  switch (style) {
+    case TopNavbarStyle.classic:
+      // The real pill scrolls its buttons once they outgrow the room it's
+      // given, so the preview clips them where they'd scroll.
+      final pill = Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: _navbarSurface(context),
+          borderRadius: AppRadius.circular(36),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Align(alignment: Alignment.centerLeft, child: _navAvatar()),
-              // A phone's buttons can outgrow its bar, so its pill shrinks to
-              // fit.
-              if (_phone)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 48),
-                  child: FittedBox(fit: BoxFit.scaleDown, child: pill),
-                )
-              else
-                // The room the real bar keeps clear of the avatar and the
-                // clock on both sides, so its pill stays centered.
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: (clock == null ? 44.0 : 96.0) + 14,
-                  ),
-                  child: pill,
-                ),
-              if (!_phone && clock != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    clock,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColorScheme.onSurface.withValues(alpha: 0.8),
+              for (var i = 0; i < buttons.length; i++)
+                if (expanded)
+                  SizedBox(
+                    height: buttonWidth,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          buttons[i].icon(iconSize, _navIconColor(i)),
+                          const SizedBox(width: 8),
+                          Text(
+                            buttons[i].label,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColorScheme.onSurface.withValues(
+                                alpha: 0.8,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
+                  )
+                else
+                  iconButton(buttons[i].icon(iconSize, _navIconColor(i))),
             ],
           ),
         ),
-      ),
+      );
+      bar = Padding(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Align(alignment: Alignment.centerLeft, child: _navAvatar()),
+            // A phone's buttons can outgrow its bar, so its pill shrinks to
+            // fit.
+            if (_phone)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 48),
+                child: FittedBox(fit: BoxFit.scaleDown, child: pill),
+              )
+            else
+              // The room the real bar keeps clear of the avatar and the
+              // clock on both sides, so its pill stays centered.
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: (clock == null ? 44.0 : 96.0) + 14,
+                ),
+                child: pill,
+              ),
+            if (!_phone && clockText != null)
+              Align(alignment: Alignment.centerRight, child: clockText),
+          ],
+        ),
+      );
+    case TopNavbarStyle.tabline:
+      bar = Padding(
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
+        child: Row(
+          children: [
+            Expanded(
+              child: tabs([
+                for (final button in buttons)
+                  if (button.role != _NavRole.search &&
+                      (button.role != _NavRole.settings ||
+                          PlatformDetection.isTV))
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: _phone ? 4 : 10,
+                      ),
+                      child: TablineTabLabel(
+                        label: button.label,
+                        focused: false,
+                        selected: button.role == _NavRole.home,
+                        fontSize: tablineFontSize(
+                          isMobile: _phone,
+                          isTV: PlatformDetection.isTV,
+                        ),
+                      ),
+                    ),
+              ]),
+            ),
+            const SizedBox(width: 16),
+            iconButton(
+              Icon(
+                Icons.search_rounded,
+                size: iconSize,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+            ),
+            if (!_phone && clockText != null) ...[
+              const SizedBox(width: 18),
+              clockText,
+            ],
+            const SizedBox(width: 18),
+            _navAvatar(),
+          ],
+        ),
+      );
+    case TopNavbarStyle.atlas:
+      final surface = _navbarSurface(context);
+      final settings = buttons.indexWhere(
+        (button) => button.role == _NavRole.settings,
+      );
+      bar = DecoratedBox(
+        decoration: BoxDecoration(
+          color: atlasBarColor(surface, surface.a),
+          border: Border(
+            bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(hPad, vPad, hPad, 0),
+          child: Row(
+            children: [
+              _navAvatar(),
+              const SizedBox(width: 12),
+              Expanded(
+                child: tabs([
+                  for (var i = 0; i < buttons.length; i++)
+                    if (buttons[i].role != _NavRole.settings)
+                      Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _phone ? 12 : 16,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            buttons[i].icon(iconSize, _navIconColor(i)),
+                            const SizedBox(width: 10),
+                            Text(
+                              buttons[i].label,
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: _navIconColor(i),
+                                fontSize: _tv || _phone ? 14 : 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (buttons[i].role == _NavRole.panel) ...[
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 18,
+                                color: _navIconColor(i),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                ]),
+              ),
+              if (!_phone && clockText != null) ...[
+                const SizedBox(width: 16),
+                clockText,
+              ],
+              // Phones reach settings from the avatar.
+              if (!_phone && settings >= 0) ...[
+                const SizedBox(width: 8),
+                iconButton(
+                  buttons[settings].icon(iconSize, _navIconColor(settings)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+  }
+
+  final screen = Stack(
+    children: [
       if (body == null)
-        Expanded(
+        Positioned.fill(
+          top: toolbarHeight,
           child: _navbarRows(
             context,
             items,
@@ -2409,6 +2381,17 @@ Widget _topNavbarPreview(
             focusFirst: focusFirst,
           ),
         ),
+      if (style == TopNavbarStyle.tabline)
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          height: toolbarHeight * 1.9,
+          child: const DecoratedBox(
+            decoration: BoxDecoration(gradient: kTablineScrim),
+          ),
+        ),
+      Positioned(left: 0, right: 0, top: 0, height: toolbarHeight, child: bar),
     ],
   );
   if (body == null) return screen;
@@ -2423,7 +2406,8 @@ Widget _topNavbarPreview(
 }
 
 /// The collapsed rail is a bare 72 wide gutter of icons with no backdrop, so
-/// the preview keeps it transparent too and just moves the rows over.
+/// the preview keeps it transparent too and just moves the rows over. Reel and
+/// Mosaic rest as a single button instead.
 Widget _leftNavbarPreview(
   BuildContext context,
   List<MediaBarSlideItem> items, {
@@ -2434,12 +2418,102 @@ Widget _leftNavbarPreview(
   final iconSize = _tv ? 24.0 : 28.0;
   final itemHeight = _tv ? 40.0 : 44.0;
   final buttons = _navButtons(context, items);
-  // Home starts its rows 56 in beside the rail where a TV's top bar takes 48,
-  // and the rows' own inset is the top bar one.
-  final railInset = _phone ? 0.0 : 56.0 - (_tv ? 48.0 : 0.0);
-  // The real rail only widens while it has focus, whatever Always Expand
-  // Navbar Labels says, and scrolls once its buttons outgrow the screen. It
-  // floats over the screen rather than pushing it aside.
+  // Home starts its rows 56 in beside the rail where a TV's top bar takes
+  // tvTopNavbarRowInset, and the rows' own inset is the top bar one.
+  final railInset = _phone ? 0.0 : 56.0 - (_tv ? tvTopNavbarRowInset : 0.0);
+  final design = _designSize();
+  final scale = navStyleScale(design, phone: _phone);
+  final Widget nav = switch (previewValue(
+    context,
+    UserPreferences.sidebarStyle,
+  )) {
+    // A phone's sidebar rests as a menu button in the corner.
+    SidebarStyle.classic when _phone => Positioned(
+      left: 8,
+      top: 8,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.4),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          Icons.menu,
+          size: 22,
+          color: Colors.white.withValues(alpha: 0.8),
+        ),
+      ),
+    ),
+    // The real rail only widens while it has focus, whatever Always Expand
+    // Navbar Labels says, and scrolls once its buttons outgrow the screen. It
+    // floats over the screen rather than pushing it aside.
+    SidebarStyle.classic => Positioned(
+      left: 0,
+      top: 0,
+      bottom: 0,
+      width: 72,
+      child: Center(
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < buttons.length; i++)
+                SizedBox(
+                  height: itemHeight,
+                  child: Center(
+                    child: buttons[i].icon(iconSize, _navIconColor(i)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    // The real one sizes itself from the screen, which here is the preview's.
+    SidebarStyle.reel => Positioned.fill(
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              size: design,
+              padding: EdgeInsets.zero,
+              viewPadding: EdgeInsets.zero,
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ReelNav(
+                entries: [
+                  NavEntry(
+                    id: 'home',
+                    label: AppLocalizations.of(context).home,
+                    icon: Icons.home_rounded,
+                    kind: NavEntryKind.home,
+                    current: true,
+                    onSelect: () {},
+                  ),
+                ],
+                center: 0,
+                open: false,
+                phone: _phone,
+                onOpen: () {},
+                onClose: () {},
+                onTurn: (_) {},
+                onSelect: () {},
+                openLabel: '',
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+    SidebarStyle.mosaic => Positioned(
+      left: _phone ? 8 : 20 * scale,
+      top: _phone ? 8 : 22 * scale,
+      child: mosaicMenuButton(focused: false, phone: _phone, scale: scale),
+    ),
+  };
   return Stack(
     children: [
       Positioned.fill(
@@ -2449,34 +2523,12 @@ Widget _leftNavbarPreview(
             _navbarRows(
               context,
               items,
-              topInset: 24,
+              topInset: _phone ? LeftSidebar.mobileMenuExtent : 24,
               modern: modern,
               focusFirst: focusFirst,
             ),
       ),
-      Positioned(
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 72,
-        child: Center(
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < buttons.length; i++)
-                  SizedBox(
-                    height: itemHeight,
-                    child: Center(
-                      child: buttons[i].icon(iconSize, _navIconColor(i)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      nav,
     ],
   );
 }
@@ -2784,48 +2836,53 @@ bool _showSampleLabels(BuildContext context) {
   return previewValue(context, UserPreferences.showPosterLabels);
 }
 
-/// The sample rows' poster and thumb heights at the card size being looked at.
-/// Modern's sample posters are drawn larger than Home's. Carousel's keep
-/// Home's size, so its panel fits under them as it does on Home.
-(double, double) _sampleCardHeights(
-  BuildContext context, {
-  required bool modern,
-  bool carousel = false,
-}) {
+/// The sample rows' poster and thumb heights at the card size and UI scale
+/// being looked at, the sizes Home draws them at in every row style.
+(double, double) _sampleCardHeights(BuildContext context) {
   final posterSize = previewValue(context, UserPreferences.posterSize);
+  final scale = _rowScale(context);
   return (
-    (modern && !carousel ? 240.0 : 150.0) *
-        _rowScale(context) *
-        posterSize.portraitHeight /
-        PosterSize.medium.portraitHeight,
-    110.0 *
-        _rowScale(context) *
-        posterSize.landscapeHeight /
-        PosterSize.medium.landscapeHeight,
+    modernImageHeight(posterSize, scale),
+    posterSize.landscapeHeight * scale,
   );
 }
 
 /// How much of the media bar the first Home row covers while Peek Home Rows
 /// is on: its title and the top half of its cards, as on Home. Zero where
-/// Home doesn't peek.
+/// Home doesn't peek. MakD off TV starts the rows at 65% instead, and phones
+/// only peek under MakD.
 double _rowPeekCover(BuildContext context, String mode) {
-  if (_phone ||
-      !previewValue(context, UserPreferences.mediaBarRowPeek) ||
-      !UserPreferences.mediaBarModeAllowsRowPeek(mode) ||
-      previewValue(context, UserPreferences.fullScreenRows)) {
+  final makd =
+      UserPreferences.normalizeMediaBarMode(mode) ==
+      UserPreferences.mediaBarModeMakd;
+  final peeks = _phone
+      ? makd
+      : previewValue(context, UserPreferences.mediaBarRowPeek) &&
+            UserPreferences.mediaBarModeAllowsRowPeek(mode);
+  if (!peeks || previewValue(context, UserPreferences.fullScreenRows)) {
     return 0;
   }
-  final style = previewValue(context, UserPreferences.homeRowsStyle);
-  final modern = style.usesModernCards;
-  final (poster, thumb) = _sampleCardHeights(
+  if (!_tv && makd) return MakdMetrics(_designSize()).classicPeek;
+  final modern = previewValue(
     context,
-    modern: modern,
-    carousel: style == HomeRowsStyle.carousel,
-  );
+    UserPreferences.homeRowsStyle,
+  ).usesModernCards;
+  final (poster, thumb) = _sampleCardHeights(context);
+  final firstRowPosters =
+      modern ||
+      _classicRowImageType(context, HomeSectionType.resume) ==
+          ImageType.poster;
   // The title band's padding and line of text, then the cards' top padding.
   final header = (modern ? 7.0 : 24.0) + 19.0 + 5.0;
-  return header + (modern ? poster : thumb) / 2;
+  return header + (firstRowPosters ? poster : thumb) / 2;
 }
+
+/// The image type a Classic sample row draws, the one picked for that row or
+/// the one every row is set to, as on Home.
+ImageType _classicRowImageType(BuildContext context, HomeSectionType section) =>
+    previewValue(context, UserPreferences.homeRowsUniversalOverride)
+    ? previewValue(context, UserPreferences.homeRowsUniversalImageType)
+    : previewValue(context, UserPreferences.homeRowImageType(section));
 
 Widget _homeRowsColumn(
   BuildContext context,
@@ -3000,11 +3057,7 @@ Widget _homeRowsColumn(
     ),
   );
 
-  final (posterHeight, thumbHeight) = _sampleCardHeights(
-    context,
-    modern: modern,
-    carousel: isCarousel,
-  );
+  final (posterHeight, thumbHeight) = _sampleCardHeights(context);
   final rowGap = rowGapOverride ?? (modern ? (_phone ? 40.0 : 60.0) : 18.0);
   final showOverview = !previewValue(
     context,
@@ -3019,6 +3072,10 @@ Widget _homeRowsColumn(
     // A phone caps a grown card at the row's width, the way Home does.
     final rowWidth = _designSize().width - 32;
     final width = _phone && grown > rowWidth ? rowWidth : grown;
+    // The ratings and overview run to the end of the row as on Home, and off
+    // TV they stop at twice the card's width.
+    final room = _designSize().width - _rowLeftInset - 20;
+    final detailsWidth = _tv ? room : (width * 2).clamp(0.0, room);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -3069,7 +3126,7 @@ Widget _homeRowsColumn(
               Positioned(
                 left: 0,
                 top: 0,
-                width: width * 2.4,
+                width: detailsWidth,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
@@ -3110,11 +3167,15 @@ Widget _homeRowsColumn(
 
   Widget row(
     String title, {
-    bool thumbs = false,
+    required HomeSectionType section,
     int offset = 0,
     bool withFocus = false,
   }) {
     final showLabels = _showSampleLabels(context);
+    final imageType = modern
+        ? ImageType.poster
+        : _classicRowImageType(context, section);
+    final wide = imageType != ImageType.poster;
     final cards = <Widget>[
       for (var i = 0; i < 8; i++)
         if (withFocus && i == 0 && modern)
@@ -3122,10 +3183,14 @@ Widget _homeRowsColumn(
         else
           card(
             _itemAt(items, i + offset),
-            height: thumbs ? thumbHeight : posterHeight,
-            aspect: thumbs ? 16 / 9 : 2 / 3,
-            imageUrl: thumbs ? _itemAt(items, i + offset).backdropUrl : null,
-            progress: thumbs && i == 0 ? 0.35 : (thumbs && i == 1 ? 0.7 : null),
+            height: wide ? thumbHeight : posterHeight,
+            aspect: switch (imageType) {
+              ImageType.poster => 2 / 3,
+              ImageType.thumb => 16 / 9,
+              ImageType.banner => kBannerAspectRatio,
+            },
+            imageUrl: wide ? _itemAt(items, i + offset).backdropUrl : null,
+            progress: wide && i == 0 ? 0.35 : (wide && i == 1 ? 0.7 : null),
             // Not every file has both, as in a real library.
             labels: !showLabels || i % 3 == 2
                 ? const []
@@ -3244,12 +3309,20 @@ Widget _homeRowsColumn(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ?infoOverlay,
-        row(l10n.continueWatching, thumbs: !modern, withFocus: focusFirst),
+        row(
+          l10n.continueWatching,
+          section: HomeSectionType.resume,
+          withFocus: focusFirst,
+        ),
         if (!oneRowPerScreen) ...[
           SizedBox(height: rowGap),
-          row(l10n.recentlyAdded, offset: 3),
+          row(
+            l10n.recentlyAdded,
+            section: HomeSectionType.latestMedia,
+            offset: 3,
+          ),
           SizedBox(height: rowGap),
-          row(l10n.nextUp, thumbs: !modern, offset: 6),
+          row(l10n.nextUp, section: HomeSectionType.nextUp, offset: 6),
         ],
       ],
     ),
@@ -5377,26 +5450,26 @@ Widget _fallbackMediaBar(String mode) => switch (mode) {
     fit: StackFit.expand,
     children: [
       _backdrop(),
-      Center(
-        child: FractionallySizedBox(
-          widthFactor: 0.56,
-          heightFactor: 0.62,
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: AppColorScheme.onSurface.withValues(alpha: 0.1),
-              borderRadius: AppRadius.circular(6),
-              border: Border.all(
-                color: AppColorScheme.onSurface.withValues(alpha: 0.16),
-              ),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              crossAxisAlignment: CrossAxisAlignment.start,
+      Align(
+        alignment: const Alignment(-0.84, 0.2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 3,
+          children: [
+            _bar(40, 8, _strong),
+            _bar(30, 3, _weak),
+            _bar(24, 3, _weak),
+            Row(
+              mainAxisSize: MainAxisSize.min,
               spacing: 3,
-              children: [_bar(34, 4, _strong), _bar(20, 4, _weak)],
+              children: [
+                _bar(6, 6, _weak),
+                _bar(14, 6, _strong),
+                _bar(6, 6, _weak),
+              ],
             ),
-          ),
+          ],
         ),
       ),
     ],

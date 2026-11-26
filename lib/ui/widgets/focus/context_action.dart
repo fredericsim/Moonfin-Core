@@ -11,6 +11,9 @@ import '../../../data/models/aggregated_item.dart';
 import '../../../data/offline/connectivity_aware_media_server_client.dart';
 import '../../../data/offline/offline_catalog.dart';
 import '../../../data/repositories/item_mutation_repository.dart';
+import '../../../data/services/media_server_client_factory.dart';
+import '../../../data/services/user_data_sync.dart';
+import '../../../data/utils/merged_copies.dart';
 import '../../../util/signed_in_server_features.dart';
 import '../../../util/server_url.dart';
 import '../../../l10n/app_localizations.dart';
@@ -28,6 +31,7 @@ import '../remove_from_playlist_dialog.dart';
 import '../adaptive/adaptive_dialog.dart';
 import '../change_artwork_dialog.dart';
 import '../identify_dialog.dart';
+import '../merged_copy_picker.dart';
 import '../overlay_sheet.dart';
 
 class ItemContextAction {
@@ -110,6 +114,90 @@ bool isContextMediaType(String? type) =>
     type == 'MusicAlbum' ||
     type == 'BoxSet';
 
+// A later menu action retires any older favorite changes not yet sent, even
+// when another view lists the same title's server copies in a different order.
+final _favoriteCopyChanges = <(int, String, String), Object>{};
+
+/// Marks [item] watched or a favorite on every server that holds it and names
+/// the servers that refused. A title only one server holds takes the usual
+/// path and fails the way it always has.
+Future<void> _changeEveryCopy(
+  BuildContext context,
+  AggregatedItem item, {
+  bool? played,
+  bool? favorite,
+}) async {
+  final session = userDataSync.session;
+  final factory = GetIt.instance<MediaServerClientFactory>();
+  final sources = [
+    for (final copy in copiesOf(item))
+      (item: copy, client: factory.clientForServerOrActive(copy.serverId)),
+  ];
+  final change = Object();
+  final keys = [
+    for (final source in sources)
+      (session, source.client.baseUrl, source.item.id),
+  ];
+  if (favorite != null) {
+    for (final key in keys) {
+      _favoriteCopyChanges[key] = change;
+    }
+  }
+  try {
+    if (sources.length == 1) {
+      final mutations = ItemMutationRepository(sources.single.client);
+      if (played != null) {
+        await mutations.setPlayed(item.id, isPlayed: played);
+      } else {
+        await mutations.setFavorite(item.id, isFavorite: favorite!);
+      }
+      return;
+    }
+    final refused = <String>[];
+    for (final (index, source) in sources.indexed) {
+      if (userDataSync.session != session) return;
+      if (favorite != null &&
+          !identical(_favoriteCopyChanges[keys[index]], change)) {
+        continue;
+      }
+      final mutations = ItemMutationRepository(source.client);
+      try {
+        if (played != null) {
+          await mutations.setPlayed(source.item.id, isPlayed: played);
+        } else {
+          await mutations.setFavorite(source.item.id, isFavorite: favorite!);
+        }
+      } catch (_) {
+        if (userDataSync.session != session) return;
+        if (favorite != null &&
+            !identical(_favoriteCopyChanges[keys[index]], change)) {
+          continue;
+        }
+        refused.add(mergedServerName(source.item.serverId));
+      }
+    }
+    if (userDataSync.session != session ||
+        refused.isEmpty ||
+        !context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)
+              .mergedCopiesNotChanged(refused.join(', ')),
+        ),
+      ),
+    );
+  } finally {
+    for (final key in keys) {
+      if (identical(_favoriteCopyChanges[key], change)) {
+        _favoriteCopyChanges.remove(key);
+      }
+    }
+  }
+}
+
 List<ItemContextAction> contextActionsFor(
   BuildContext context,
   AggregatedItem item, {
@@ -165,12 +253,16 @@ List<ItemContextAction> contextActionsFor(
         label: l10n.goToDetailsScreen,
         onSelect: () async {
           if (!context.mounted) return;
-          context.push(
-            Destinations.itemOrPhoto(
-              item.id,
-              serverId: item.serverId,
-              type: item.type,
-              channelId: item.channelId,
+          await openPickedCopy(
+            context,
+            item,
+            (copy) => context.push(
+              Destinations.itemOrPhoto(
+                copy.id,
+                serverId: copy.serverId,
+                type: copy.type,
+                channelId: copy.channelId,
+              ),
             ),
           );
         },
@@ -184,8 +276,12 @@ List<ItemContextAction> contextActionsFor(
         label: watchStateOf(item).hasProgress ? l10n.resume : l10n.play,
         onSelect: () async {
           if (!context.mounted) return;
-          context.push(
-            Destinations.item(item.id, serverId: item.serverId, autoPlay: true),
+          await openPickedCopy(
+            context,
+            item,
+            (copy) => context.push(
+              Destinations.item(copy.id, serverId: copy.serverId, autoPlay: true),
+            ),
           );
         },
       ));
@@ -213,8 +309,9 @@ List<ItemContextAction> contextActionsFor(
           ? l10n.contextMenuMarkUnwatched
           : l10n.contextMenuMarkWatched,
       onSelect: () async {
-        await mutations.setPlayed(item.id, isPlayed: !item.isPlayed);
-        onChanged?.call();
+        final session = userDataSync.session;
+        await _changeEveryCopy(context, item, played: !item.isPlayed);
+        if (userDataSync.session == session) onChanged?.call();
       },
     ));
 
@@ -276,8 +373,9 @@ List<ItemContextAction> contextActionsFor(
           ? l10n.contextMenuRemoveFromFavorites
           : l10n.contextMenuAddToFavorites,
       onSelect: () async {
-        await mutations.setFavorite(item.id, isFavorite: !item.isFavorite);
-        onChanged?.call();
+        final session = userDataSync.session;
+        await _changeEveryCopy(context, item, favorite: !item.isFavorite);
+        if (userDataSync.session == session) onChanged?.call();
       },
     ));
 

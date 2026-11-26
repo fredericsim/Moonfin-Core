@@ -242,11 +242,13 @@ class _StartupScreenState extends State<StartupScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset(
-                  'assets/images/logo_and_text.png',
-                  height: _isLargeScreen ? 80 : 56,
-                ),
-                const SizedBox(height: 32),
+                if (webRuntimeConfig.showLoadingLogo) ...[
+                  Image.asset(
+                    'assets/images/logo_and_text.png',
+                    height: _isLargeScreen ? 80 : 56,
+                  ),
+                  const SizedBox(height: 32),
+                ],
                 SizedBox(
                   height: 24,
                   width: 24,

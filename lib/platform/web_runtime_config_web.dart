@@ -26,7 +26,14 @@ Future<void> loadWebRuntimeConfig() async {
         decoded.map((key, value) => MapEntry(key.toString(), value)),
       );
     }
-  } catch (_) {}
+  } catch (_) {
+    // Keep the default loading appearance if configuration is unavailable.
+  } finally {
+    web.document.documentElement?.setAttribute(
+      'data-moonfin-loading-logo',
+      webRuntimeConfig.showLoadingLogo.toString(),
+    );
+  }
 }
 
 String _resolveConfigUrl() {

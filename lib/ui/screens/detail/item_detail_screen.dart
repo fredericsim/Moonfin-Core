@@ -336,7 +336,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
   bool _fullPageOpened = false;
   Timer? _focusedBackdropDebounce;
   String? _lastFocusedBackdropItemId;
-  String? _lastDetailBackdropItemId;
+  String? _lastDetailBackdropKey;
+  String? _lastDetailItemId;
   final GlobalKey<NouveauDetailContentState> _nouveauContentKey =
       GlobalKey<NouveauDetailContentState>();
   final Map<String, String> _focusedPrimaryBackdropUrlCache =
@@ -526,20 +527,18 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
       return;
     }
     if (item != null) {
-      bool needInitialBackdrop = _lastDetailBackdropItemId != item.id;
-      if (item.type == 'Playlist' &&
-          _viewModel.tracks.isNotEmpty &&
-          _lastFocusedBackdropItemId == null) {
+      final useTrackBackdrop = usesFirstTrackBackdrop(item, _viewModel.tracks);
+      final backdropKey = detailBackdropKey(_backgroundService, item);
+      bool needInitialBackdrop = _lastDetailBackdropKey != backdropKey;
+      if (useTrackBackdrop && _lastFocusedBackdropItemId == null) {
         needInitialBackdrop = true;
       }
 
       if (needInitialBackdrop) {
-        _lastDetailBackdropItemId = item.id;
+        _lastDetailBackdropKey = backdropKey;
         _focusedPrimaryBackdropUrlCache.clear();
 
-        final target = (item.type == 'Playlist' && _viewModel.tracks.isNotEmpty)
-            ? _viewModel.tracks.first
-            : item;
+        final target = useTrackBackdrop ? _viewModel.tracks.first : item;
         if (!widget.quickLook) {
           _backgroundService.setBackground(
             target,
@@ -548,10 +547,12 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
           _backdropUrl.value = _backgroundService.currentUrl;
         }
 
-        if (item.type == 'Playlist' && _viewModel.tracks.isNotEmpty) {
+        if (useTrackBackdrop) {
           _onBackdropItemFocused(_viewModel.tracks.first);
         }
-
+      }
+      if (_lastDetailItemId != item.id) {
+        _lastDetailItemId = item.id;
         if (item.mediaSources.isNotEmpty) {
           _selectedMediaSourceId = item.mediaSources.first['Id']?.toString();
         } else {
@@ -11565,6 +11566,20 @@ Future<bool> _anyItemHasCompletedDownload(
   return false;
 }
 
+/// Only a playlist with no backdrop of its own borrows its first track's art,
+/// so one set through Change Artwork wins.
+@visibleForTesting
+bool usesFirstTrackBackdrop(AggregatedItem item, List<AggregatedItem> tracks) =>
+    item.type == 'Playlist' &&
+    tracks.isNotEmpty &&
+    item.backdropImageTags.isEmpty;
+
+/// A reload after Change Artwork keeps the item's id but brings new image tags,
+/// so the page picks its backdrop again when either changes.
+@visibleForTesting
+String detailBackdropKey(BackgroundService backgrounds, AggregatedItem item) =>
+    '${item.id}|${backgrounds.backdropUrlsFor(item).join('|')}';
+
 /// [queue] with [parts] playing right after [target], or unchanged when the
 /// target isn't the item at [startIndex]. Public for its tests. Every
 /// production caller lives in this file.
@@ -13343,11 +13358,13 @@ class _DetailActionButtonState extends State<_DetailActionButton>
 
   /// Modern detail style. Phones show every button as a circle with its label
   /// underneath, except portrait Play, which spans the width as a pill. Larger
-  /// screens show circles that grow their label while focused or hovered.
+  /// screens show circles that grow their label while focused, and show it in
+  /// a tooltip while hovered.
   Widget _buildModernChild(
     BuildContext context, {
     required bool isMobile,
     required bool showHighlight,
+    required bool focusShown,
     required Color focusColor,
     required Color iconColor,
     required Color labelColor,
@@ -13369,7 +13386,10 @@ class _DetailActionButtonState extends State<_DetailActionButton>
     final labelUnder = host?.labelsUnderCircles ?? false;
     // With the circles' labels under them, Play keeps its own in the pill.
     final labeledPlay = widget.isPrimary && labelUnder;
-    final isExpanded = labeledPlay || (showHighlight && !labelUnder);
+    // Only focus grows a circle. A hovered one that no longer fit its line
+    // would wrap to the next, out from under the pointer, then shrink and wrap
+    // back.
+    final isExpanded = labeledPlay || (focusShown && !labelUnder);
     final scale = _modernButtonScale(context);
     final double height = widget.isPrimary
         ? (isMobile ? 50.0 : 54.0 * scale)
@@ -13590,7 +13610,17 @@ class _DetailActionButtonState extends State<_DetailActionButton>
         ),
       ),
     );
-    if (!labelUnder) return circle;
+    // The tooltip stays while focused, since taking it away would rebuild the
+    // circle and skip its grow animation.
+    if (!labelUnder) {
+      return widget.label.isEmpty
+          ? circle
+          : Tooltip(
+              message: widget.label,
+              triggerMode: TooltipTriggerMode.manual,
+              child: circle,
+            );
+    }
 
     // The label's space is kept even with nothing in it, so the row doesn't
     // shift as focus moves along it. A long label stays centered under its
@@ -13705,9 +13735,11 @@ class _DetailActionButtonState extends State<_DetailActionButton>
     final nodeHasFocus = widget.focusNode?.hasFocus ?? false;
     // Focus only shows while the keys are driving, or the Play button that
     // takes focus on arrival would stay lit beside whatever the mouse hovers.
-    final showHighlight =
-        hovered ||
-        InputModeTracker.showFocusVisuals(context, focused || nodeHasFocus);
+    final focusShown = InputModeTracker.showFocusVisuals(
+      context,
+      focused || nodeHasFocus,
+    );
+    final showHighlight = hovered || focusShown;
     final modern =
         context
             .findAncestorWidgetOfExactType<DetailActionButtons>()
@@ -13829,6 +13861,7 @@ class _DetailActionButtonState extends State<_DetailActionButton>
                   context,
                   isMobile: isMobile,
                   showHighlight: showHighlight,
+                  focusShown: focusShown,
                   focusColor: focusColor,
                   iconColor: iconColor,
                   labelColor: labelColor,
