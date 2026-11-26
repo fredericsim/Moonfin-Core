@@ -167,6 +167,14 @@ for the fork, with permission to write repository contents, before automatic
 releases can be created. A manual workflow run builds a downloadable Actions
 artifact for testing but cannot publish or promote a release.
 
+Loading screens use a spinner by default. Set `showLoadingLogo` to `true` in
+the web runtime `config.json` to restore the Moonfin logo during startup,
+sign-in, and playback loading. Builds can also opt in with
+`--dart-define=MOONFIN_SHOW_LOADING_LOGO=true`; a value supplied by the runtime
+configuration takes precedence. The web bundle workflow exposes the same
+choice as `show_loading_logo` (off by default). Existing loading-animation
+preferences are kept and the logo remains available when the flag is enabled.
+
 On a Jellyfin host with Docker, update a Moonfin checkout and deploy the newest
 versioned Moonfin web release with:
 

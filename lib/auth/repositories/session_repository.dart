@@ -1254,43 +1254,36 @@ class SessionRepository {
         item.rawData['TimerId'] != null;
   }
 
-  /// Opens the player [item] plays in, unless one is already open. Returns
-  /// false when a newer remote command took over while Live TV was closing.
+  /// Opens the player [item] plays in, reusing a matching player. Returns
+  /// false when a newer remote command took over while a player was closing.
   Future<bool> _ensurePlayerRouteForItem(
     AggregatedItem item,
     int generation,
   ) async {
-    // A pushed player leaves the configuration's uri on the page under it, so
-    // only the top route shows a player already open. Reading the uri pushed a
-    // second player, which a later Stop left behind empty.
-    final currentPath = _remoteRoutePath;
-    if (currentPath == Destinations.videoPlayer ||
-        currentPath == Destinations.audioPlayer) {
-      return true;
-    }
-    if (currentPath == Destinations.liveTvPlayer) {
-      // Pushed over Live TV, the new player left it underneath for Stop to
-      // uncover. Live TV stops the manager when its page goes, so it has to be
-      // gone before the new item starts or it would stop that one too.
-      final liveTv = _closeDialogsAbovePage();
-      _leaveTopPage();
-      if (liveTv != null) {
-        await liveTv.completed;
-        await WidgetsBinding.instance.endOfFrame;
-      }
-      if (generation != _remoteNavigationGeneration) return false;
-    }
-
     final mediaType = item.rawData['MediaType'] as String?;
     final isAudio =
         item.type == 'Audio' ||
         item.type == 'MusicAlbum' ||
         item.type == 'AudioBook' ||
         mediaType == 'Audio';
+    final target = isAudio ? Destinations.audioPlayer : Destinations.videoPlayer;
+    // A pushed player leaves the configuration's uri on the page under it,
+    // so inspect the top route and reuse it only for the same media type.
+    final currentPath = _remoteRoutePath;
+    if (currentPath == target) return true;
+    if (_remoteStopPlayerRoutes.contains(currentPath)) {
+      // Video and Live TV stop the manager when their page goes. Finish that
+      // teardown before starting the new item, and leave no old player below it.
+      final player = _closeDialogsAbovePage();
+      _leaveTopPage();
+      if (player != null) {
+        await player.completed;
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (generation != _remoteNavigationGeneration) return false;
+    }
 
-    _router.push(
-      isAudio ? Destinations.audioPlayer : Destinations.videoPlayer,
-    );
+    _router.push(target);
     return true;
   }
 

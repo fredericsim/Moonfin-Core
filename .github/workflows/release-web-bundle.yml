@@ -16,6 +16,10 @@ on:
         description: Enable browser WebRTC subnet scan
         type: boolean
         default: true
+      show_loading_logo:
+        description: Show the Moonfin loading logo instead of a spinner
+        type: boolean
+        default: false
       default_server_url:
         description: Optional default server URL
         type: string
@@ -88,9 +92,11 @@ jobs:
           echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
 
       - name: Build web bundle
+        env:
+          SHOW_LOADING_LOGO: ${{ inputs.show_loading_logo || false }}
         run: |
           flutter pub get
-          flutter build web --wasm --release --no-web-resources-cdn --base-href "/Moonfin/Web/"
+          flutter build web --wasm --release --no-web-resources-cdn --base-href "/Moonfin/Web/" --dart-define=MOONFIN_SHOW_LOADING_LOGO="$SHOW_LOADING_LOGO"
           bash scripts/fetch-web-fonts.sh build/web
 
       - name: Sync and validate Theme Editor
@@ -120,12 +126,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_PLUGIN_MODE: ${{ inputs.plugin_mode }}
           INPUT_ENABLE_WEBRTC_SCAN: ${{ inputs.enable_webrtc_scan }}
+          INPUT_SHOW_LOADING_LOGO: ${{ inputs.show_loading_logo }}
           INPUT_DEFAULT_SERVER_URL: ${{ inputs.default_server_url }}
           INPUT_DISCOVERY_PROXY_URL: ${{ inputs.discovery_proxy_url }}
           INPUT_FORCED_SERVER_URL: ${{ inputs.forced_server_url }}
         run: |
           PLUGIN_MODE=true
           ENABLE_WEBRTC_SCAN=true
+          SHOW_LOADING_LOGO=false
           DEFAULT_SERVER_URL=""
           DISCOVERY_PROXY_URL=""
           FORCED_SERVER_URL=""
@@ -133,6 +141,7 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             PLUGIN_MODE="$INPUT_PLUGIN_MODE"
             ENABLE_WEBRTC_SCAN="$INPUT_ENABLE_WEBRTC_SCAN"
+            SHOW_LOADING_LOGO="$INPUT_SHOW_LOADING_LOGO"
             DEFAULT_SERVER_URL="$INPUT_DEFAULT_SERVER_URL"
             DISCOVERY_PROXY_URL="$INPUT_DISCOVERY_PROXY_URL"
             FORCED_SERVER_URL="$INPUT_FORCED_SERVER_URL"
@@ -144,11 +153,13 @@ jobs:
             --arg forcedServerUrl "$FORCED_SERVER_URL" \
             --arg pluginMode "$PLUGIN_MODE" \
             --arg enableWebRtcScan "$ENABLE_WEBRTC_SCAN" \
+            --arg showLoadingLogo "$SHOW_LOADING_LOGO" \
             '{
               schemaVersion: 1,
               defaultServerUrl: (if ($defaultServerUrl | length) > 0 then $defaultServerUrl else null end),
               discoveryProxyUrl: (if ($discoveryProxyUrl | length) > 0 then $discoveryProxyUrl else null end),
               enableWebRtcScan: ($enableWebRtcScan == "true"),
+              showLoadingLogo: ($showLoadingLogo == "true"),
               brandingName: "Moonfin",
               pluginMode: ($pluginMode == "true"),
               forcedServerUrl: (if ($forcedServerUrl | length) > 0 then $forcedServerUrl else null end)

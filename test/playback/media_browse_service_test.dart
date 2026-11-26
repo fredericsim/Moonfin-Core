@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:get_it/get_it.dart';
 import 'package:moonfin/auth/repositories/session_repository.dart';
 import 'package:moonfin/data/database/offline_database.dart'
@@ -41,6 +44,7 @@ class _FakeItemsApi implements ItemsApi {
     this.favArtists = const [],
     this.artistTracks = const [],
     this.artistAlbums = const [],
+    this.playlistTracks = const [],
   });
 
   /// Play history, served to the IsPlayed query.
@@ -52,6 +56,7 @@ class _FakeItemsApi implements ItemsApi {
   /// Served to artistIds queries, by included item type.
   final List<Map<String, dynamic>> artistTracks;
   final List<Map<String, dynamic>> artistAlbums;
+  final List<Map<String, dynamic>> playlistTracks;
 
   /// View ids that contain no audio; getItems with one of these as parentId
   /// returns nothing, so the content probe filters the view out.
@@ -96,7 +101,9 @@ class _FakeItemsApi implements ItemsApi {
     final artistIds = invocation.namedArguments[#artistIds] as List<String>?;
     final ids = invocation.namedArguments[#ids] as List<String>?;
     List<Map<String, dynamic>>? fixed;
-    if (filters?.contains('IsPlayed') == true) {
+    if (invocation.memberName == #getPlaylistItems) {
+      fixed = playlistTracks;
+    } else if (filters?.contains('IsPlayed') == true) {
       fixed = recentTracks;
     } else if (favorite == true) {
       fixed = invocation.memberName == #getAlbumArtists
@@ -140,6 +147,7 @@ class _FakeItemsApi implements ItemsApi {
   dynamic noSuchMethod(Invocation invocation) {
     switch (invocation.memberName) {
       case #getItems:
+      case #getPlaylistItems:
       case #getAlbumArtists:
         return _page(invocation);
       case #getGenres:
@@ -186,15 +194,18 @@ class _FakeImageApi implements ImageApi {
 }
 
 class _FakeUserViewsApi implements UserViewsApi {
-  _FakeUserViewsApi(this.views);
+  _FakeUserViewsApi(this.views, [this.gate]);
 
   final List<Map<String, dynamic>> views;
+  final Future<void>? gate;
 
   @override
   Future<Map<String, dynamic>> getUserViews({
     bool includeHidden = false,
-  }) async =>
-      {'Items': views};
+  }) async {
+    await gate;
+    return {'Items': views};
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -202,8 +213,10 @@ class _FakeUserViewsApi implements UserViewsApi {
 }
 
 class _FakeClient implements MediaServerClient {
-  _FakeClient(this._itemsApi, {List<Map<String, dynamic>> views = const []})
-      : _userViewsApi = _FakeUserViewsApi(views);
+  _FakeClient(this._itemsApi, {
+    List<Map<String, dynamic>> views = const [],
+    Future<void>? viewsGate,
+  }) : _userViewsApi = _FakeUserViewsApi(views, viewsGate);
 
   final _FakeItemsApi _itemsApi;
   final _FakeUserViewsApi _userViewsApi;
@@ -282,7 +295,24 @@ class _FakeSessionRepository implements SessionRepository {
       super.noSuchMethod(invocation);
 }
 
+class _NoClientFactory implements MediaServerClientFactory {
+  @override
+  Map<String, MediaServerClient> get clients => {};
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _FakeBootstrap implements HeadlessSessionBootstrap {
+  _FakeBootstrap([this.restore]);
+
+  final Future<MediaServerClient?> Function()? restore;
+
+  @override
+  Future<MediaServerClient?> ensureSession({
+    bool ignoreDisabledLoginBehavior = false,
+  }) async => restore?.call();
+
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
@@ -357,10 +387,14 @@ MediaBrowseService _service(
   Map<String, int> localResume = const {},
   List<DownloadedItem> downloads = const [],
   Map<String, int> resumeByServer = const {},
+  Future<void>? viewsGate,
+  MediaServerClientFactory? clientFactory,
+  HeadlessSessionBootstrap? bootstrap,
 }) =>
     MediaBrowseService(
-      _FakeClientFactory(_FakeClient(api, views: views)),
-      _FakeBootstrap(),
+      clientFactory ??
+          _FakeClientFactory(_FakeClient(api, views: views, viewsGate: viewsGate)),
+      bootstrap ?? _FakeBootstrap(),
       _FakeResumeService(localResume, resumeByServer),
       _FakeSessionStore(),
       _FakeOfflineRepository(downloads),
@@ -714,6 +748,98 @@ void main() {
       expect(partial.map((t) => t.id), isNot(contains('tab|downloads')));
     });
 
+    for (final restoring in [false, true]) {
+      test(
+        'root keeps Downloads after a ${restoring ? 'session restore' : 'server probe'} timeout',
+        () {
+          final platform = debugDefaultTargetPlatformOverride;
+          debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+          addTearDown(() => debugDefaultTargetPlatformOverride = platform);
+          fakeAsync((clock) {
+            final gate = Completer<void>();
+            final service = _service(
+              _FakeItemsApi(totalItems: 0),
+              downloads: [
+                _download({'Id': 'd1', 'Name': 'Song', 'Type': 'Audio'}),
+              ],
+              viewsGate: restoring ? null : gate.future,
+              clientFactory: restoring ? _NoClientFactory() : null,
+              bootstrap: restoring
+                  ? _FakeBootstrap(() async {
+                      await gate.future;
+                      return null;
+                    })
+                  : null,
+            );
+            List<MediaItem>? root;
+            service
+                .getChildren(AudioService.browsableRootId)
+                .then((items) => root = items);
+            clock.flushMicrotasks();
+            clock.elapse(const Duration(seconds: 25));
+            clock.flushMicrotasks();
+
+            expect(root, isNotNull);
+            expect(root!.map((item) => item.id), contains('tab|downloads'));
+            List<MediaItem>? downloads;
+            service
+                .getChildren('tab|downloads')
+                .then((items) => downloads = items);
+            clock.flushMicrotasks();
+            clock.elapse(const Duration(seconds: 4));
+            expect(downloads!.map((item) => item.id), [
+              'dlshuffle|-|all',
+              'dl|srv|d1',
+            ]);
+            gate.complete();
+            clock.flushMicrotasks();
+            if (!restoring) {
+              List<MediaItem>? retried;
+              service
+                  .getChildren(AudioService.browsableRootId)
+                  .then((items) => retried = items);
+              clock.flushMicrotasks();
+              clock.elapse(const Duration(seconds: 4));
+              expect(retried!.map((item) => item.id), contains('tab|home'));
+            }
+          });
+        },
+      );
+    }
+
+    test(
+      'root keeps Downloads with no signed-in client and honors paging',
+      () async {
+        final service = _service(
+          _FakeItemsApi(totalItems: 0),
+          clientFactory: _NoClientFactory(),
+          downloads: [
+            _download({'Id': 'd1', 'Name': 'Song', 'Type': 'Audio'}),
+          ],
+        );
+        final root = await service.getChildren(AudioService.browsableRootId);
+        expect(root.map((item) => item.id), [
+          'tab|downloads',
+          MediaBrowseService.signInMessageId,
+        ]);
+        final first = await service.getChildren(AudioService.browsableRootId, {
+          _kPage: 0,
+          _kPageSize: 1,
+        });
+        final second = await service.getChildren(AudioService.browsableRootId, {
+          _kPage: 1,
+          _kPageSize: 1,
+        });
+        expect(first.single.id, 'tab|downloads');
+        expect(second.single.id, MediaBrowseService.signInMessageId);
+        final empty = await _service(
+          _FakeItemsApi(totalItems: 0),
+          clientFactory: _NoClientFactory(),
+        ).getChildren(AudioService.browsableRootId);
+        expect(empty.single.id, MediaBrowseService.signInMessageId);
+      },
+    );
+
     test('Library lists the five music categories without a server call',
         () async {
       final api = _FakeItemsApi(totalItems: 0);
@@ -815,6 +941,50 @@ void main() {
       expect(request!.items.map((i) => i.id), ['t1', 't2', 't3']);
       expect(request.startIndex, 1);
     });
+
+    for (final context in ['recent', 'fav', 'top', 'album', 'playlist']) {
+      for (final available in [true, false]) {
+        test('a changed $context list resolves the selected track '
+            '(available: $available)', () async {
+          final selected = track('selected', 'Album', 'artist');
+          final siblings = [track('other', 'Album', 'artist'), selected];
+          final byId = {'selected': selected};
+          final api = _FakeItemsApi(
+            totalItems: 0,
+            recentTracks: siblings,
+            favSongs: siblings,
+            artistTracks: siblings,
+            books: siblings,
+            playlistTracks: siblings,
+            itemsById: byId,
+          );
+          final service = _service(api);
+          final parent = switch (context) {
+            'recent' => 'sec|recent|srv',
+            'fav' => 'sec|favorites|srv',
+            'top' => 'artist|srv|artist',
+            'album' => 'album|srv|album',
+            _ => 'playlist|srv|playlist',
+          };
+          final rows = await service.getChildren(parent);
+          final row = rows.singleWhere(
+            (item) => item.id.startsWith('track|srv|selected|'),
+          );
+          siblings.remove(selected);
+          service.dropRecents();
+          if (!available) byId.remove('selected');
+
+          final request = await service.resolvePlayRequest(row.id);
+
+          if (available) {
+            expect(request!.items.map((item) => item.id), ['selected']);
+            expect(request.startIndex, 0);
+          } else {
+            expect(request, isNull);
+          }
+        });
+      }
+    }
 
     test('artist page is shuffle, most played, then the albums', () async {
       final api = _FakeItemsApi(
@@ -1018,6 +1188,41 @@ void main() {
         expect(api.listCalls, 0);
       });
 
+      test('downloaded albums with matching IDs stay separate by server', () async {
+        final downloads = [
+          for (final server in ['a', 'b'])
+            for (final track in [2, 1])
+              _download({
+                'Id': '$track',
+                'Name': '$server track $track',
+                'Type': 'Audio',
+                'AlbumId': '7',
+                'Album': '$server album',
+                'IndexNumber': track,
+              }, serverId: server),
+        ];
+        final api = _FakeItemsApi(totalItems: 0);
+        final service = _service(api, downloads: downloads);
+
+        final tab = await service.getChildren('tab|downloads');
+        expect(tab.map((node) => node.id), [
+          'dlshuffle|-|all', 'dlalbum|a|7', 'dlalbum|b|7',
+        ]);
+        for (final server in ['a', 'b']) {
+          final album = await service.getChildren('dlalbum|$server|7');
+          expect(album.map((track) => track.id), [
+            'dl|$server|1|7', 'dl|$server|2|7',
+          ]);
+          final request = await service.resolvePlayRequest('dl|$server|2|7');
+          expect(request!.items.map((track) => (track.serverId, track.id)), [
+            (server, '1'), (server, '2'),
+          ]);
+          expect(request.startIndex, 1);
+        }
+        expect(await service.getChildren('dlalbum|missing|7'), isEmpty);
+        expect(api.listCalls, 0);
+      });
+
       test('a download stored under the base URL resumes at the furthest '
           'saved position', () async {
         final book = _download({
@@ -1036,6 +1241,26 @@ void main() {
             const Duration(seconds: 90));
         expect(await start({'srv|b1': 5000, 'http://fake|b1': 90000}),
             const Duration(seconds: 90));
+      });
+
+      test('a downloaded album queue excludes another server with matching IDs', () async {
+        final service = _service(_FakeItemsApi(totalItems: 0), downloads: [
+          for (final server in ['a', 'b'])
+            _download({
+              'Id': '1',
+              'Name': '$server track',
+              'Type': 'Audio',
+              'AlbumId': '7',
+              'Album': '$server album',
+            }, serverId: server),
+        ]);
+        for (final server in ['a', 'b']) {
+          final request = await service.resolvePlayRequest('dl|$server|1|7');
+          expect(request!.items.map((track) => (track.serverId, track.id)), [
+            (server, '1'),
+          ]);
+          expect(request.startIndex, 0);
+        }
       });
 
       test('a downloaded album track queues the album in track order',

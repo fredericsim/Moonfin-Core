@@ -114,6 +114,10 @@ bool isContextMediaType(String? type) =>
     type == 'MusicAlbum' ||
     type == 'BoxSet';
 
+// A later menu action retires any older favorite changes not yet sent, even
+// when another view lists the same title's server copies in a different order.
+final _favoriteCopyChanges = <(int, String, String), Object>{};
+
 /// Marks [item] watched or a favorite on every server that holds it and names
 /// the servers that refused. A title only one server holds takes the usual
 /// path and fails the way it always has.
@@ -123,53 +127,75 @@ Future<void> _changeEveryCopy(
   bool? played,
   bool? favorite,
 }) async {
-  final copies = copiesOf(item);
+  final session = userDataSync.session;
   final factory = GetIt.instance<MediaServerClientFactory>();
-  if (copies.length == 1) {
-    final mutations = ItemMutationRepository(
-      factory.clientForServerOrActive(item.serverId),
-    );
-    return played != null
-        ? mutations.setPlayed(item.id, isPlayed: played)
-        : mutations.setFavorite(item.id, isFavorite: favorite!);
-  }
-  // The shared user data is keyed by item id alone, and another server can
-  // use a copy's id for a different title. So every server is asked directly
-  // and only the card's own entry changes.
-  final refused = <String>[];
-  for (final copy in copies) {
-    final api = factory.clientForServerOrActive(copy.serverId).userLibraryApi;
-    try {
-      await switch ((played, favorite)) {
-        (true, _) => api.markPlayed(copy.id),
-        (false, _) => api.unmarkPlayed(copy.id),
-        (_, true) => api.markFavorite(copy.id),
-        _ => api.unmarkFavorite(copy.id),
-      };
-    } catch (_) {
-      refused.add(mergedServerName(copy.serverId));
+  final sources = [
+    for (final copy in copiesOf(item))
+      (item: copy, client: factory.clientForServerOrActive(copy.serverId)),
+  ];
+  final change = Object();
+  final keys = [
+    for (final source in sources)
+      (session, source.client.baseUrl, source.item.id),
+  ];
+  if (favorite != null) {
+    for (final key in keys) {
+      _favoriteCopyChanges[key] = change;
     }
   }
-  if (refused.length < copies.length) {
-    userDataSync.publish(
-      item.id,
-      played != null
-          ? {
-              'Played': played,
-              'PlayedPercentage': null,
-              'PlaybackPositionTicks': 0,
-            }
-          : {'IsFavorite': favorite},
-    );
-  }
-  if (refused.isEmpty || !context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(
-        AppLocalizations.of(context).mergedCopiesNotChanged(refused.join(', ')),
+  try {
+    if (sources.length == 1) {
+      final mutations = ItemMutationRepository(sources.single.client);
+      if (played != null) {
+        await mutations.setPlayed(item.id, isPlayed: played);
+      } else {
+        await mutations.setFavorite(item.id, isFavorite: favorite!);
+      }
+      return;
+    }
+    final refused = <String>[];
+    for (final (index, source) in sources.indexed) {
+      if (userDataSync.session != session) return;
+      if (favorite != null &&
+          !identical(_favoriteCopyChanges[keys[index]], change)) {
+        continue;
+      }
+      final mutations = ItemMutationRepository(source.client);
+      try {
+        if (played != null) {
+          await mutations.setPlayed(source.item.id, isPlayed: played);
+        } else {
+          await mutations.setFavorite(source.item.id, isFavorite: favorite!);
+        }
+      } catch (_) {
+        if (userDataSync.session != session) return;
+        if (favorite != null &&
+            !identical(_favoriteCopyChanges[keys[index]], change)) {
+          continue;
+        }
+        refused.add(mergedServerName(source.item.serverId));
+      }
+    }
+    if (userDataSync.session != session ||
+        refused.isEmpty ||
+        !context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)
+              .mergedCopiesNotChanged(refused.join(', ')),
+        ),
       ),
-    ),
-  );
+    );
+  } finally {
+    for (final key in keys) {
+      if (identical(_favoriteCopyChanges[key], change)) {
+        _favoriteCopyChanges.remove(key);
+      }
+    }
+  }
 }
 
 List<ItemContextAction> contextActionsFor(
@@ -283,8 +309,9 @@ List<ItemContextAction> contextActionsFor(
           ? l10n.contextMenuMarkUnwatched
           : l10n.contextMenuMarkWatched,
       onSelect: () async {
+        final session = userDataSync.session;
         await _changeEveryCopy(context, item, played: !item.isPlayed);
-        onChanged?.call();
+        if (userDataSync.session == session) onChanged?.call();
       },
     ));
 
@@ -346,8 +373,9 @@ List<ItemContextAction> contextActionsFor(
           ? l10n.contextMenuRemoveFromFavorites
           : l10n.contextMenuAddToFavorites,
       onSelect: () async {
+        final session = userDataSync.session;
         await _changeEveryCopy(context, item, favorite: !item.isFavorite);
-        onChanged?.call();
+        if (userDataSync.session == session) onChanged?.call();
       },
     ));
 

@@ -131,6 +131,7 @@ class RemoteMediaNotificationService {
   DateTime? _pausedSince;
   String? _pausedIdentityKey;
   bool _started = false;
+  bool? _sessionEnabled;
   bool _subscribedToSessions = false;
   MediaServerClient? _fetchingClient;
   bool _refreshQueued = false;
@@ -192,15 +193,15 @@ class RemoteMediaNotificationService {
 
   void start() {
     if (_started || !_enabledOnPlatform) return;
+    configureForAudioService();
     _started = true;
 
-    _prefs.addListener(_onPrefsOrCastChanged);
-    _castService.activeKindNotifier.addListener(_onPrefsOrCastChanged);
-    _castService.activeTargetNotifier.addListener(_onPrefsOrCastChanged);
-    _castService.castItemNotifier.addListener(_onPrefsOrCastChanged);
-    _castService.remoteStateNotifier.addListener(_onPrefsOrCastChanged);
-    _castService.remotePositionNotifier.addListener(_onPrefsOrCastChanged);
-    _castService.remoteVolumeNotifier.addListener(_onPrefsOrCastChanged);
+    _castService.activeKindNotifier.addListener(_onCastChanged);
+    _castService.activeTargetNotifier.addListener(_onCastChanged);
+    _castService.castItemNotifier.addListener(_onCastChanged);
+    _castService.remoteStateNotifier.addListener(_onCastChanged);
+    _castService.remotePositionNotifier.addListener(_onCastChanged);
+    _castService.remoteVolumeNotifier.addListener(_onCastChanged);
 
     _socketEventSub = _socketHandler.events.listen(_handleSocketEvent);
     _socketConnSub = _socketHandler.connections.listen((_) {
@@ -252,13 +253,19 @@ class RemoteMediaNotificationService {
     _syncFallbackPoll();
   }
 
-  void _onPrefsOrCastChanged() {
+  void _onCastChanged() {
     _syncSubscription();
     _recompute();
   }
 
   bool get isEnabled =>
-      _enabledOnPlatform && _prefs.get(UserPreferences.remoteMediaNotification);
+      _sessionEnabled ??
+      (_enabledOnPlatform && _prefs.get(UserPreferences.remoteMediaNotification));
+
+  /// Captures the preference used by AudioService's startup configuration.
+  /// Keep notifications and Android foreground retention on the same policy
+  /// until restart, including a preference change while AudioService.init awaits.
+  bool configureForAudioService() => _sessionEnabled ??= isEnabled;
 
   void _syncSubscription() {
     final wantSubscribed = _started && isEnabled && _activeClient() != null;
@@ -903,13 +910,12 @@ class RemoteMediaNotificationService {
       _subscribedToSessions = false;
       _socketHandler.unsubscribe('Sessions');
     }
-    _prefs.removeListener(_onPrefsOrCastChanged);
-    _castService.activeKindNotifier.removeListener(_onPrefsOrCastChanged);
-    _castService.activeTargetNotifier.removeListener(_onPrefsOrCastChanged);
-    _castService.castItemNotifier.removeListener(_onPrefsOrCastChanged);
-    _castService.remoteStateNotifier.removeListener(_onPrefsOrCastChanged);
-    _castService.remotePositionNotifier.removeListener(_onPrefsOrCastChanged);
-    _castService.remoteVolumeNotifier.removeListener(_onPrefsOrCastChanged);
+    _castService.activeKindNotifier.removeListener(_onCastChanged);
+    _castService.activeTargetNotifier.removeListener(_onCastChanged);
+    _castService.castItemNotifier.removeListener(_onCastChanged);
+    _castService.remoteStateNotifier.removeListener(_onCastChanged);
+    _castService.remotePositionNotifier.removeListener(_onCastChanged);
+    _castService.remoteVolumeNotifier.removeListener(_onCastChanged);
     activeSessionNotifier.dispose();
     pausedGraceRenewals.dispose();
   }

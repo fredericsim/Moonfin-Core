@@ -7,9 +7,12 @@ import 'package:moonfin_design/moonfin_design.dart';
 import 'package:server_core/server_core.dart' hide ImageType;
 
 import '../../../data/models/aggregated_item.dart';
+import '../../../data/repositories/multi_server_repository.dart';
+import '../../../data/utils/merged_copies.dart';
 import '../../../auth/repositories/user_repository.dart';
 import '../../../data/services/background_service.dart';
 import '../../../data/services/log_service.dart';
+import '../../../data/services/media_server_client_factory.dart';
 import '../../../data/utils/genre_browse_utils.dart';
 import '../../../preference/preference_constants.dart';
 import '../../../preference/user_preferences.dart';
@@ -34,17 +37,26 @@ bool _isCompact(BuildContext context) =>
     (PlatformDetection.useMobileUi ||
         MediaQuery.sizeOf(context).width < _kCompactBreakpoint);
 
+typedef _GenreSource = ({
+  MediaServerClient client,
+  String serverId,
+  String libraryId,
+  String genreId,
+  int count,
+});
+
 class LibraryGenresScreen extends StatefulWidget {
   final String libraryId;
+  final String? serverId;
 
-  const LibraryGenresScreen({super.key, required this.libraryId});
+  const LibraryGenresScreen({super.key, required this.libraryId, this.serverId});
 
   @override
   State<LibraryGenresScreen> createState() => _LibraryGenresScreenState();
 }
 
 class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
-  final _client = GetIt.instance<MediaServerClient>();
+  late final MediaServerClient _client;
   final _prefs = GetIt.instance<UserPreferences>();
   final _backgroundService = GetIt.instance<BackgroundService>();
   StreamSubscription<String?>? _backgroundSub;
@@ -56,6 +68,8 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
   String? _collectionType;
   bool _lastGroupCollections = false;
   final Set<String> _usedArtworkIds = {};
+  final _genreSources = <GenreCardData, List<_GenreSource>>{};
+  bool get _isMerged => mergedLibraryType(widget.libraryId) != null;
 
   /// A grouping toggle starts a second load, so the first stops writing.
   int _loadToken = 0;
@@ -82,6 +96,8 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
   @override
   void initState() {
     super.initState();
+    _client = GetIt.instance<MediaServerClientFactory>()
+        .clientForServerOrActive(widget.serverId);
     _lastGroupCollections =
         _prefs.get(UserPreferences.groupItemsIntoCollections);
     _backgroundSub = _backgroundService.backgroundStream.listen((url) {
@@ -104,56 +120,60 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
     final token = ++_loadToken;
     try {
       _usedArtworkIds.clear();
-      final parentData = await _client.itemsApi.getItem(widget.libraryId);
-      _libraryName = parentData['Name'] as String? ?? '';
-      _collectionType = (parentData['CollectionType'] as String?)
-          ?.toLowerCase();
+      if (_isMerged) {
+        await _loadMerged(token);
+      } else {
+        final parentData = await _client.itemsApi.getItem(widget.libraryId);
+        _libraryName = parentData['Name'] as String? ?? '';
+        _collectionType = (parentData['CollectionType'] as String?)
+            ?.toLowerCase();
 
-      final response = await _client.itemsApi.getGenres(
-        parentId: widget.libraryId,
-        userId: _client.userId,
-        sortBy: 'SortName',
-        sortOrder: 'Ascending',
-        recursive: true,
-        fields: 'ItemCounts,PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
-      );
-
-      final items = (response['Items'] as List?) ?? [];
-      final temp = items.map((g) {
-        final data = g as Map<String, dynamic>;
-        final count = data['ChildCount'] as int? ??
-            (data['MovieCount'] as int? ?? 0) +
-                (data['SeriesCount'] as int? ?? 0) +
-                (data['AlbumCount'] as int? ?? 0) +
-                (data['SongCount'] as int? ?? 0) +
-                (data['ArtistCount'] as int? ?? 0) +
-                (data['MusicVideoCount'] as int? ?? 0);
-        return (
-          data: data,
-          itemCount: count,
-        );
-      }).where((genre) {
-        if (_collectionType == 'music') return true;
-        return genre.itemCount > 0 || !genreReportsCounts(genre.data);
-      }).toList();
-
-      _genres = temp.map((x) {
-        final data = x.data;
-        final (imageUrl, backdropUrl, hasOwnArtwork) = resolveGenreOwnArtwork(
-          genreData: data,
-          imageApi: _client.imageApi,
-          maxWidth: _genreCardRequestMaxWidth(),
+        final response = await _client.itemsApi.getGenres(
+          parentId: widget.libraryId,
+          userId: _client.userId,
+          sortBy: 'SortName',
+          sortOrder: 'Ascending',
+          recursive: true,
+          fields: 'ItemCounts,PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
         );
 
-        return GenreCardData(
-          id: data['Id']?.toString() ?? '',
-          name: data['Name'] as String? ?? '',
-          itemCount: x.itemCount,
-          imageUrl: imageUrl,
-          backdropUrl: backdropUrl,
-          isGenreFallback: !hasOwnArtwork,
-        );
-      }).toList();
+        final items = (response['Items'] as List?) ?? [];
+        final temp = items.map((g) {
+          final data = g as Map<String, dynamic>;
+          final count = data['ChildCount'] as int? ??
+              (data['MovieCount'] as int? ?? 0) +
+                  (data['SeriesCount'] as int? ?? 0) +
+                  (data['AlbumCount'] as int? ?? 0) +
+                  (data['SongCount'] as int? ?? 0) +
+                  (data['ArtistCount'] as int? ?? 0) +
+                  (data['MusicVideoCount'] as int? ?? 0);
+          return (
+            data: data,
+            itemCount: count,
+          );
+        }).where((genre) {
+          if (_collectionType == 'music') return true;
+          return genre.itemCount > 0 || !genreReportsCounts(genre.data);
+        }).toList();
+
+        _genres = temp.map((x) {
+          final data = x.data;
+          final (imageUrl, backdropUrl, hasOwnArtwork) = resolveGenreOwnArtwork(
+            genreData: data,
+            imageApi: _client.imageApi,
+            maxWidth: _genreCardRequestMaxWidth(),
+          );
+
+          return GenreCardData(
+            id: data['Id']?.toString() ?? '',
+            name: data['Name'] as String? ?? '',
+            itemCount: x.itemCount,
+            imageUrl: imageUrl,
+            backdropUrl: backdropUrl,
+            isGenreFallback: !hasOwnArtwork,
+          );
+        }).toList();
+      }
     } catch (e) {
       // The empty state looks the same as a library with no genres, so a
       // refused request is logged.
@@ -174,6 +194,151 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
     _loadArtwork(token);
   }
 
+  Future<void> _loadMerged(int token) async {
+    final type = mergedLibraryType(widget.libraryId)!;
+    final merged = await GetIt.instance<MultiServerRepository>().mergedLibrary(
+      type,
+    );
+    if (_disposed || token != _loadToken) return;
+    final batches = await Future.wait([
+      for (final source in merged.sources)
+        () async {
+          try {
+            final response = await source.session.client.itemsApi.getGenres(
+              parentId: source.libraryId,
+              userId: source.session.userId,
+              sortBy: 'SortName',
+              sortOrder: 'Ascending',
+              recursive: true,
+              includeItemTypes: [type == 'movies' ? 'Movie' : 'Series'],
+              fields: 'ItemCounts,PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
+            );
+            return (
+              source: source,
+              items: response['Items'] as List? ?? const [],
+            );
+          } catch (_) {
+            return (source: source, items: const <dynamic>[]);
+          }
+        }(),
+    ]);
+    if (_disposed || token != _loadToken) return;
+    final cards = <String, GenreCardData>{};
+    final locations = <GenreCardData, List<_GenreSource>>{};
+    for (final batch in batches) {
+      for (final raw in batch.items.whereType<Map>()) {
+        final data = raw.cast<String, dynamic>();
+        final id = data['Id']?.toString();
+        final name = (data['Name'] as String? ?? '').trim();
+        if (id == null || id.isEmpty || name.isEmpty) continue;
+        final count = browsableGenreCount(
+          data,
+          includeItemTypes: [type == 'movies' ? 'Movie' : 'Series'],
+        );
+        if (genreReportsCounts(data) && count <= 0) continue;
+        final card = cards.putIfAbsent(name.toLowerCase(), () {
+          final (image, backdrop, own) = resolveGenreOwnArtwork(
+            genreData: data,
+            imageApi: batch.source.session.client.imageApi,
+            maxWidth: _genreCardRequestMaxWidth(),
+          );
+          return GenreCardData(
+            id: id,
+            name: name,
+            itemCount: 0,
+            imageUrl: image,
+            backdropUrl: backdrop,
+            isGenreFallback: !own,
+          );
+        });
+        card.itemCount += count;
+        locations.putIfAbsent(card, () => []).add((
+          client: batch.source.session.client,
+          serverId: batch.source.session.server.id,
+          libraryId: batch.source.libraryId,
+          genreId: id,
+          count: count,
+        ));
+      }
+    }
+    _libraryName = merged.name;
+    _collectionType = type;
+    _genres = cards.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    _genreSources
+      ..clear()
+      ..addAll(locations);
+  }
+
+  Future<void> _loadMergedGenreArtwork(
+    GenreCardData genre,
+    String? includeType,
+    bool groupCollections,
+    int token,
+  ) async {
+    final sources = _genreSources[genre] ?? const <_GenreSource>[];
+    var count = 0;
+    var failed = false;
+    String? image = genre.imageUrl;
+    String? backdrop = genre.backdropUrl;
+    for (final source in sources) {
+      if (_disposed || token != _loadToken) return;
+      try {
+        final response = await source.client.itemsApi.getItems(
+          parentId: source.libraryId,
+          genreIds: [source.genreId],
+          includeItemTypes: groupCollections
+              ? [includeType!, 'BoxSet']
+              : [includeType!],
+          excludeItemTypes: kNonRootBrowseItemTypes,
+          sortBy: 'Random',
+          sortOrder: 'Ascending',
+          collapseBoxSetItems: groupCollections,
+          recursive: true,
+          limit: genre.isGenreFallback ? 4 : 0,
+          enableTotalRecordCount: true,
+          fields: 'PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
+          enableImageTypes: 'Primary,Backdrop,Thumb',
+          imageTypeLimit: 1,
+        );
+        if (_disposed || token != _loadToken) return;
+        final items = [
+          for (final raw in response['Items'] as List? ?? const [])
+            if (raw is Map) raw.cast<String, dynamic>(),
+        ];
+        final total = response['TotalRecordCount'];
+        count += total is num ? total.toInt() : items.length;
+        if (genre.isGenreFallback && image == null) {
+          final prefix = '${source.serverId}|';
+          final (tile, background, usedId) = resolveGenreFallbackArtwork(
+            items: items,
+            imageApi: source.client.imageApi,
+            maxWidth: _genreCardRequestMaxWidth(),
+            avoidIds: {
+              for (final id in _usedArtworkIds)
+                if (id.startsWith(prefix)) id.substring(prefix.length),
+            },
+          );
+          image = tile;
+          backdrop = background;
+          if (usedId != null) _usedArtworkIds.add('$prefix$usedId');
+        }
+      } catch (_) {
+        failed = true;
+        count += source.count;
+      }
+    }
+    if (_disposed || token != _loadToken) return;
+    if (count <= 0 && !failed) {
+      _genres.remove(genre);
+    } else {
+      genre.itemCount = count;
+      genre.imageUrl = image;
+      genre.backdropUrl = backdrop;
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadArtwork(int token) async {
     final includeType = _includeType;
     final groupCollections = _lastGroupCollections;
@@ -186,6 +351,7 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
     final needsWork = _genres
         .where(
           (genre) =>
+              _isMerged ||
               _collectionType == 'music' ||
               genre.isGenreFallback ||
               (groupCollections && isVideo) ||
@@ -228,6 +394,9 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
     int token,
   ) async {
     if (_disposed || token != _loadToken) return;
+    if (_isMerged) {
+      return _loadMergedGenreArtwork(genre, includeType, groupCollections, token);
+    }
     try {
       final isVideo = includeType == 'Movie' || includeType == 'Series';
       final includeItemTypes = isVideo && groupCollections
@@ -500,11 +669,14 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
                     genreId: genre.id,
                     parentId: widget.libraryId,
                     includeType: _includeType,
+                    serverId: _isMerged ? null : widget.serverId,
                   ),
                 );
               },
               onLongPress: () {
-                final serverId = GetIt.instance<UserRepository>().currentUser?.serverId ?? '';
+                final serverId = _genreSources[genre]?.firstOrNull?.serverId ??
+                    widget.serverId ??
+                    GetIt.instance<UserRepository>().currentUser?.serverId ?? '';
                 final aggregatedItem = AggregatedItem(
                   id: genre.id,
                   serverId: serverId,

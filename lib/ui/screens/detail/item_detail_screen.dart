@@ -336,7 +336,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
   bool _fullPageOpened = false;
   Timer? _focusedBackdropDebounce;
   String? _lastFocusedBackdropItemId;
-  String? _lastDetailBackdropItemId;
+  String? _lastDetailBackdropKey;
+  String? _lastDetailItemId;
   final GlobalKey<NouveauDetailContentState> _nouveauContentKey =
       GlobalKey<NouveauDetailContentState>();
   final Map<String, String> _focusedPrimaryBackdropUrlCache =
@@ -526,20 +527,18 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
       return;
     }
     if (item != null) {
-      bool needInitialBackdrop = _lastDetailBackdropItemId != item.id;
-      if (item.type == 'Playlist' &&
-          _viewModel.tracks.isNotEmpty &&
-          _lastFocusedBackdropItemId == null) {
+      final useTrackBackdrop = usesFirstTrackBackdrop(item, _viewModel.tracks);
+      final backdropKey = detailBackdropKey(_backgroundService, item);
+      bool needInitialBackdrop = _lastDetailBackdropKey != backdropKey;
+      if (useTrackBackdrop && _lastFocusedBackdropItemId == null) {
         needInitialBackdrop = true;
       }
 
       if (needInitialBackdrop) {
-        _lastDetailBackdropItemId = item.id;
+        _lastDetailBackdropKey = backdropKey;
         _focusedPrimaryBackdropUrlCache.clear();
 
-        final target = (item.type == 'Playlist' && _viewModel.tracks.isNotEmpty)
-            ? _viewModel.tracks.first
-            : item;
+        final target = useTrackBackdrop ? _viewModel.tracks.first : item;
         if (!widget.quickLook) {
           _backgroundService.setBackground(
             target,
@@ -548,10 +547,12 @@ class _ItemDetailScreenState extends State<ItemDetailScreen>
           _backdropUrl.value = _backgroundService.currentUrl;
         }
 
-        if (item.type == 'Playlist' && _viewModel.tracks.isNotEmpty) {
+        if (useTrackBackdrop) {
           _onBackdropItemFocused(_viewModel.tracks.first);
         }
-
+      }
+      if (_lastDetailItemId != item.id) {
+        _lastDetailItemId = item.id;
         if (item.mediaSources.isNotEmpty) {
           _selectedMediaSourceId = item.mediaSources.first['Id']?.toString();
         } else {
@@ -11564,6 +11565,20 @@ Future<bool> _anyItemHasCompletedDownload(
   }
   return false;
 }
+
+/// Only a playlist with no backdrop of its own borrows its first track's art,
+/// so one set through Change Artwork wins.
+@visibleForTesting
+bool usesFirstTrackBackdrop(AggregatedItem item, List<AggregatedItem> tracks) =>
+    item.type == 'Playlist' &&
+    tracks.isNotEmpty &&
+    item.backdropImageTags.isEmpty;
+
+/// A reload after Change Artwork keeps the item's id but brings new image tags,
+/// so the page picks its backdrop again when either changes.
+@visibleForTesting
+String detailBackdropKey(BackgroundService backgrounds, AggregatedItem item) =>
+    '${item.id}|${backgrounds.backdropUrlsFor(item).join('|')}';
 
 /// [queue] with [parts] playing right after [target], or unchanged when the
 /// target isn't the item at [startIndex]. Public for its tests. Every

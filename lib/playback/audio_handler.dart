@@ -1234,7 +1234,9 @@ Future<void> initAudioService({
   // on, and only for pausedForegroundGrace. Holding it also keeps
   // audio_service's wake lock, which makes Android warn that the app drains
   // the battery.
-  final holdForeground = remoteService?.isEnabled ?? false;
+  // The switch requires restart: the service uses the same captured value
+  // even if preferences change while AudioService.init is awaiting the platform.
+  final holdForeground = remoteService?.configureForAudioService() ?? false;
 
   final handler = await AudioService.init<MoonfinAudioHandler>(
     builder: () => MoonfinAudioHandler(

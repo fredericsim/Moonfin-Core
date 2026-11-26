@@ -256,16 +256,21 @@ class MediaBrowseService {
     final List<MediaItem> items;
     try {
       final client = await _client().timeout(_browseTimeout);
-      if (client == null) return [_signInItem];
+      if (client == null) {
+        return await _unavailableChildren(parentMediaId, _signInItem, options);
+      }
       items = await (_inflight[parentMediaId] ??=
               _loadChildrenOnce(client, parentMediaId))
           .timeout(_browseTimeout);
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      if (status == 401 || status == 403) return [_signInItem];
-      return [_offlineItem];
+      return await _unavailableChildren(
+        parentMediaId,
+        status == 401 || status == 403 ? _signInItem : _offlineItem,
+        options,
+      );
     } catch (_) {
-      return [_offlineItem];
+      return await _unavailableChildren(parentMediaId, _offlineItem, options);
     }
 
     // A book page shows the saved position, so it's fetched fresh every time
@@ -275,6 +280,18 @@ class MediaBrowseService {
     }
     await CarArtwork.instance.persistHosts();
     return _pageOf(items, options);
+  }
+
+  Future<List<MediaItem>> _unavailableChildren(
+    String parentMediaId,
+    MediaItem message,
+    Map<String, dynamic>? options,
+  ) async {
+    if (parentMediaId != AudioService.browsableRootId) return [message];
+    // Local files remain reachable when restoring a session or probing its
+    // server fails. Keep this fallback uncached so the next browse can retry.
+    final downloads = await _downloadsTab();
+    return _pageOf([?downloads, message], options);
   }
 
   Future<List<MediaItem>> _loadChildrenOnce(
@@ -613,15 +630,23 @@ class MediaBrowseService {
     return const [];
   }
 
+  Future<MediaItem?> _downloadsTab() async {
+    try {
+      if ((await _downloadedAudio()).isNotEmpty) {
+        return _browsableNode('tab|downloads', _l10n.savedMedia, extras: _listHints);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<List<MediaItem>> _rootTabs(MediaServerClient client) async {
+    // Start the local lookup independently of the optional server probe.
+    final downloads = _downloadsTab();
     var hasBookLibrary = false;
     try {
       hasBookLibrary = (await _bookViews(client)).isNotEmpty;
     } catch (_) {}
-    var hasDownloads = false;
-    try {
-      hasDownloads = (await _downloadedAudio()).isNotEmpty;
-    } catch (_) {}
+    final downloadsTab = await downloads;
     final l10n = _l10n;
     return [
       _browsableNode('tab|home', l10n.carListenNow, extras: _listHints),
@@ -630,8 +655,7 @@ class MediaBrowseService {
         // List, not grid: a multi-library user picks a library from plain
         // rows. The letter tiles inside carry their own item style.
         _browsableNode('tab|books', l10n.audiobooks, extras: _listHints),
-      if (hasDownloads)
-        _browsableNode('tab|downloads', l10n.savedMedia, extras: _listHints),
+      ?downloadsTab,
     ];
   }
 
@@ -1337,23 +1361,26 @@ class MediaBrowseService {
     final audio = await _downloadedAudio();
     final l10n = _l10n;
     if (parentMediaId.startsWith('dlalbum|')) {
-      final albumId = parentMediaId.split('|').elementAtOrNull(2);
+      final parts = parentMediaId.split('|');
+      final serverId = parts.elementAtOrNull(1);
+      final albumId = parts.elementAtOrNull(2);
       final tracks = audio
-          .where((i) => !i.isAudiobook && i.albumId == albumId)
+          .where((i) =>
+              !i.isAudiobook && i.serverId == serverId && i.albumId == albumId)
           .toList()
         ..sort(_trackOrder);
       return [for (final t in tracks) _downloadLeaf(t, albumId: albumId)];
     }
     final books = audio.where((i) => i.isAudiobook).toList();
     final tracks = audio.where((i) => !i.isAudiobook).toList();
-    final albums = <String, AggregatedItem>{};
+    final albums = <(String, String), AggregatedItem>{};
     final loose = <AggregatedItem>[];
     for (final t in tracks) {
       final albumId = t.albumId;
       if (albumId == null) {
         loose.add(t);
       } else {
-        albums.putIfAbsent(albumId, () => t);
+        albums.putIfAbsent((t.serverId, albumId), () => t);
       }
     }
     final bookShelf = _shelf(l10n.audiobooks);
@@ -1363,7 +1390,7 @@ class MediaBrowseService {
     return [
       if (tracks.isNotEmpty) _shuffleItem('dlshuffle|-|all', l10n.shuffleAll),
       for (final b in books) _downloadLeaf(b, hints: bookShelf),
-      for (final MapEntry(key: albumId, value: track) in albums.entries)
+      for (final MapEntry(key: (_, albumId), value: track) in albums.entries)
         _albumNodeFromTrack(track, hints: albumShelf)
             .copyWith(id: 'dlalbum|${track.serverId}|$albumId'),
       for (final t in loose) _downloadLeaf(t, hints: songShelf),
@@ -1409,7 +1436,8 @@ class MediaBrowseService {
     }
     if (albumId == null) return PlayRequest(items: [item]);
     final tracks = audio
-        .where((i) => !i.isAudiobook && i.albumId == albumId)
+        .where((i) =>
+            !i.isAudiobook && i.serverId == serverId && i.albumId == albumId)
         .toList()
       ..sort(_trackOrder);
     return _queueAround(tracks, item.id);
@@ -1435,7 +1463,7 @@ class MediaBrowseService {
   static PlayRequest? _queueAround(List<AggregatedItem> items, String itemId) {
     if (items.isEmpty) return null;
     final index = items.indexWhere((i) => i.id == itemId);
-    return PlayRequest(items: items, startIndex: index < 0 ? 0 : index);
+    return index < 0 ? null : PlayRequest(items: items, startIndex: index);
   }
 
   Future<PlayRequest?> resolvePlayRequest(String mediaId) async {
@@ -1457,8 +1485,9 @@ class MediaBrowseService {
         final ctxKind = parts.elementAtOrNull(3);
         final ctxId = parts.elementAtOrNull(4);
         if (itemId == null) return null;
+        final PlayRequest? queued;
         if (ctxKind == 'album' && ctxId != null && ctxId != '-') {
-          return _siblingsRequest(
+          queued = await _siblingsRequest(
             client,
             serverId,
             itemId,
@@ -1469,25 +1498,27 @@ class MediaBrowseService {
               sortOrder: 'Ascending',
             ),
           );
-        }
-        if (ctxKind == 'playlist' && ctxId != null && ctxId != '-') {
-          return _siblingsRequest(
+        } else if (ctxKind == 'playlist' && ctxId != null && ctxId != '-') {
+          queued = await _siblingsRequest(
             client,
             serverId,
             itemId,
             () => client.itemsApi.getPlaylistItems(ctxId),
           );
+        } else {
+          // Rows from a list the service builds itself queue that same list.
+          final siblings = switch (ctxKind) {
+            'recent' => await _recentlyPlayed(client, serverId),
+            'fav' => await _favoriteSongs(client, serverId),
+            'top' when ctxId != null && ctxId != '-' =>
+              await _artistTopTracks(client, serverId, ctxId),
+            _ => const <AggregatedItem>[],
+          };
+          queued = _queueAround(siblings, itemId);
         }
-        // Rows from a list the service builds itself queue that same list.
-        final siblings = switch (ctxKind) {
-          'recent' => await _recentlyPlayed(client, serverId),
-          'fav' => await _favoriteSongs(client, serverId),
-          'top' when ctxId != null && ctxId != '-' =>
-            await _artistTopTracks(client, serverId, ctxId),
-          _ => const <AggregatedItem>[],
-        };
-        final queued = _queueAround(siblings, itemId);
         if (queued != null) return queued;
+        // A cached car row can outlive its list membership. Resolve exactly
+        // that item instead of silently starting a different sibling.
         final item = await _getItem(client, serverId, itemId);
         if (item == null) return null;
         return PlayRequest(

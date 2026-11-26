@@ -1,15 +1,23 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get_it/get_it.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:moonfin/data/models/aggregated_item.dart';
 import 'package:moonfin/data/services/user_data_sync.dart';
+import 'package:moonfin/data/services/media_server_client_factory.dart';
 import 'package:moonfin/data/services/websocket_message_parser.dart';
 import 'package:server_core/server_core.dart';
 
-class _MockClient extends Mock implements MediaServerClient {}
+class _MockClient extends Mock implements MediaServerClient {
+  _MockClient({this.baseUrl = 'srv'});
+
+  @override
+  final String baseUrl;
+}
 
 class _MockItemsApi extends Mock implements ItemsApi {}
+class _MockFactory extends Mock implements MediaServerClientFactory {}
 
 /// An items API that reads one item at a time and narrows a refresh (Silo):
 /// only `changed` is worth asking about again.
@@ -23,11 +31,12 @@ class _ScopedItemsApi extends Mock implements ItemsApi, UserDataRefreshScope {
 
 AggregatedItem _episode({
   String id = 'ep1',
+  String serverId = 'srv',
   bool played = false,
   int position = 0,
 }) => AggregatedItem(
   id: id,
-  serverId: 'srv',
+  serverId: serverId,
   rawData: {
     'Id': id,
     'Name': 'An episode',
@@ -53,6 +62,55 @@ void main() {
 
   setUp(() => sync = UserDataSync());
   tearDown(() => sync.dispose());
+
+  group('server scopes', () {
+    test('saved server IDs and URLs share only their own active-server state', () async {
+      final client = _MockClient(baseUrl: 'https://server-a/');
+      final factory = _MockFactory();
+      when(() => factory.getClientIfExists('saved-a')).thenReturn(client);
+      GetIt.instance.registerSingleton<MediaServerClient>(client);
+      GetIt.instance.registerSingleton<MediaServerClientFactory>(factory);
+      addTearDown(GetIt.instance.reset);
+
+      sync.requestFavorite('ep1', true);
+      sync.publish('ep1', {'Played': true}, serverId: 'saved-a');
+
+      expect(sync.apply(_episode(serverId: 'saved-a')).isPlayed, isTrue);
+      expect(sync.apply(_episode(serverId: 'https://server-a')).isFavorite, isTrue);
+      expect(sync.apply(_episode(serverId: 'saved-b')).isPlayed, isFalse);
+      expect(sync.apply(_episode(serverId: 'saved-b')).isFavorite, isFalse);
+    });
+
+    test('pending favorites and revisions stay with their source server', () {
+      sync.publish('ep1', {'IsFavorite': false}, serverId: 'a');
+      sync.requestFavorite('ep1', true, serverId: 'a');
+      final aRevision = sync.revisionFor('ep1', serverId: 'a');
+      sync.publish('ep1', {'IsFavorite': false}, serverId: 'b');
+
+      expect(sync.favoriteFor('ep1', serverId: 'a'), isTrue);
+      expect(sync.favoriteFor('ep1', serverId: 'b'), isFalse);
+      expect(sync.favoriteChangePending('ep1', serverId: 'b'), isFalse);
+      expect(sync.revisionFor('ep1', serverId: 'a'), aRevision);
+
+      sync.failFavoriteChange('ep1', serverId: 'a');
+      expect(sync.favoriteFor('ep1', serverId: 'a'), isFalse);
+      expect(sync.favoriteFor('ep1', serverId: 'b'), isFalse);
+    });
+
+    test('socket events do not patch another server with the same ID', () async {
+      final events = StreamController<ServerWebSocketMessage>();
+      addTearDown(events.close);
+      sync.bindTo(events.stream, userId: 'user', serverId: 'a');
+      events.add(const UserDataChangedMessage(
+        userId: 'user',
+        userDataList: [{'ItemId': 'ep1', 'Played': true}],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sync.apply(_episode(serverId: 'a')).isPlayed, isTrue);
+      expect(sync.apply(_episode(serverId: 'b')).isPlayed, isFalse);
+    });
+  });
 
   group('patching items', () {
     test('an item nothing is known about comes back untouched', () {
@@ -289,6 +347,29 @@ void main() {
   });
 
   group('refreshing from the server', () {
+    test('an answer from a previous session cannot restore its cache', () async {
+      final response = Completer<Map<String, dynamic>>();
+      final api = _MockItemsApi();
+      when(() => api.getItems(
+        ids: any(named: 'ids'),
+        fields: any(named: 'fields'),
+        recursive: any(named: 'recursive'),
+        limit: any(named: 'limit'),
+        enableTotalRecordCount: any(named: 'enableTotalRecordCount'),
+      )).thenAnswer((_) => response.future);
+      final client = _MockClient();
+      when(() => client.itemsApi).thenReturn(api);
+      final refresh = sync.refreshFromServer(client, ['ep1']);
+      sync.reset();
+      response.complete({'Items': [
+        {'Id': 'ep1', 'UserData': {'Played': true}},
+      ]});
+      await refresh;
+
+      final original = _episode();
+      expect(identical(sync.apply(original), original), isTrue);
+    });
+
     ({_MockClient client, _MockItemsApi itemsApi}) clientReturning(
       List<Map<String, dynamic>> items,
     ) {

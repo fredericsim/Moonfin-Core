@@ -156,7 +156,8 @@ class _GeneralScreenState extends State<_GeneralScreen> {
                     SwitchPreferenceTile(
                       preference: UserPreferences.remoteMediaNotification,
                       title: l10n.remoteMediaNotificationTitle,
-                      subtitle: l10n.remoteMediaNotificationSubtitle,
+                      subtitle: '${l10n.remoteMediaNotificationSubtitle} '
+                          '(${l10n.impellerRestartTitle})',
                       icon: Icons.cast_connected,
                     ),
                 ],

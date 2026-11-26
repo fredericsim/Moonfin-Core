@@ -844,13 +844,23 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
               onExit: (_) {
                 if (_atlasByHover) _scheduleAtlasClose();
               },
-              child: AtlasPanel(
-                spec: spec,
-                scopeNode: _atlasPanelScope,
-                firstFocus: _atlasFirstLink,
-                compact: PlatformDetection.useMobileUi,
-                onExit: () => _closeAtlas(refocusTab: true),
-                onOpen: _openFromAtlas,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.max(
+                    0.0,
+                    MediaQuery.sizeOf(context).height -
+                        MediaQuery.paddingOf(context).vertical -
+                        TopToolbar.heightFor(context),
+                  ),
+                ),
+                child: AtlasPanel(
+                  spec: spec,
+                  scopeNode: _atlasPanelScope,
+                  firstFocus: _atlasFirstLink,
+                  compact: PlatformDetection.useMobileUi,
+                  onExit: () => _closeAtlas(refocusTab: true),
+                  onOpen: _openFromAtlas,
+                ),
               ),
             ),
           ),

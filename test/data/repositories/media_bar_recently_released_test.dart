@@ -34,20 +34,28 @@ void main() {
     RecentlyReleasedSeriesType mode, {
     List<Map<String, dynamic>> Function(int limit)? children,
     String source = UserPreferences.mediaBarSourceRecentlyReleased,
+    int itemCount = 10,
+    bool mixed = false,
+    bool collection = false,
+    List<Map<String, dynamic>> movies = const [],
   }) async {
     SharedPreferences.setMockInitialValues({});
     final store = PreferenceStore();
     await store.init();
     final prefs = UserPreferences(store);
     await prefs.set(UserPreferences.pluginSyncEnabled, false);
+    await prefs.set(UserPreferences.mediaBarItemCount, "$itemCount");
     await prefs.set(UserPreferences.mediaBarSourceType, source);
     await prefs.set(UserPreferences.recentlyReleasedSeriesType, mode);
+    if (collection) {
+      await prefs.set(UserPreferences.mediaBarCollectionIds, 'collection');
+    }
 
     final views = _UserViewsApi();
     when(() => views.getUserViews()).thenAnswer(
       (_) async => {
         'Items': [
-          {'Id': 'tv', 'CollectionType': 'tvshows'},
+          {'Id': 'tv', 'CollectionType': mixed ? 'mixed' : 'tvshows'},
         ],
       },
     );
@@ -71,6 +79,7 @@ void main() {
       return {
         'Items': switch (types?.single) {
           'Series' => [_item('first', 'Series')],
+          'Movie' => movies,
           _ when children != null => children(limit),
           _ => [
             _item('e1', 'Episode', seriesId: 'late'),
@@ -117,6 +126,31 @@ void main() {
         ],
       },
     );
+    when(() => items.getItems(
+      parentId: any(named: 'parentId'),
+      includeItemTypes: const ['Episode'],
+      recursive: true,
+      sortBy: 'PremiereDate',
+      sortOrder: 'Descending',
+      minPremiereDate: any(named: 'minPremiereDate'),
+      limit: any(named: 'limit'),
+      enableTotalRecordCount: false,
+    )).thenAnswer((invocation) async => {
+      'Items': children?.call(invocation.namedArguments[#limit] as int) ?? [],
+    });
+    when(() => items.getItems(
+      parentId: any(named: 'parentId'),
+      includeItemTypes: const ['Movie'],
+      recursive: true,
+      sortBy: 'PremiereDate',
+      sortOrder: 'Descending',
+      minPremiereDate: any(named: 'minPremiereDate'),
+      filters: any(named: 'filters'),
+      limit: any(named: 'limit'),
+      fields: any(named: 'fields'),
+      enableTotalRecordCount: false,
+      enableImageTypes: 'Backdrop,Logo,Banner',
+    )).thenAnswer((_) async => {'Items': movies});
     final images = _ImageApi();
     when(
       () => images.getBackdropImageUrl(
@@ -202,6 +236,70 @@ void main() {
 
     expect(shown, ['late', 'early']);
   });
+
+  for (final mode in [
+    RecentlyReleasedSeriesType.episode,
+    RecentlyReleasedSeriesType.season,
+  ]) {
+    for (final collection in [false, true]) {
+      for (final movieCount in [1, 8]) {
+        test(
+          '$mode mixes $movieCount movies into ${collection ? 'collection' : 'mixed library'} slides before limiting',
+          () async {
+            final (shown, _) = await load(
+              mode,
+              mixed: true,
+              collection: collection,
+              children: (_) => [
+                for (var i = 0; i < 12; i++)
+                  _item(
+                    'child$i',
+                    mode == RecentlyReleasedSeriesType.season
+                        ? 'Season'
+                        : 'Episode',
+                    seriesId: 's$i',
+                  ),
+              ],
+              movies: [
+                for (var i = 0; i < movieCount; i++) _item('m$i', 'Movie'),
+              ],
+            );
+
+            expect(shown, hasLength(10));
+            expect(shown.where((id) => id.startsWith('s')), [
+              for (var i = 0; i < (movieCount == 1 ? 9 : 5); i++) 's$i',
+            ]);
+            expect(shown.where((id) => id.startsWith('m')), [
+              for (var i = 0; i < (movieCount == 1 ? 1 : 5); i++) 'm$i',
+            ]);
+          },
+        );
+      }
+    }
+  }
+
+  for (final collection in [false, true]) {
+    test('New Releases keeps movies alongside recent series '
+        '(collection: $collection)', () async {
+      final yesterday = DateTime.now().subtract(const Duration(days: 1)).toUtc().toIso8601String();
+      final (shown, _) = await load(
+        RecentlyReleasedSeriesType.episode,
+        source: UserPreferences.mediaBarSourceNewReleases,
+        itemCount: 5,
+        mixed: true,
+        collection: collection,
+        children: (_) => [
+          for (var i = 0; i < 20; i++) {
+            ..._item('e$i', 'Episode', seriesId: 's$i'),
+            'PremiereDate': yesterday,
+            'LocationType': 'FileSystem',
+          },
+        ],
+        movies: [{..._item('new-movie', 'Movie'), 'PremiereDate': yesterday}],
+      );
+      expect(shown, ['s0', 'new-movie', 's1', 's2', 's3']);
+    });
+  }
 
   test('series mode still asks for series', () async {
     final (shown, asked) = await load(RecentlyReleasedSeriesType.series);

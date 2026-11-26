@@ -7,6 +7,7 @@ import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:moonfin/auth/models/server.dart';
 import 'package:moonfin/data/repositories/mdblist_repository.dart';
 import 'package:moonfin/data/repositories/multi_server_repository.dart';
+import 'package:moonfin/data/services/user_data_sync.dart';
 import 'package:moonfin/data/utils/blocked_ratings.dart';
 import 'package:moonfin/data/utils/merged_copies.dart';
 import 'package:moonfin/data/viewmodels/library_browse_view_model.dart';
@@ -27,6 +28,11 @@ class _SortedItemsApi implements ItemsApi {
     this.ratings = const {},
     this.lightGate,
     this.pageCap,
+    this.includeTotal = true,
+    this.itemIds = const {},
+    this.userData = const {},
+    this.userDataGate,
+    this.genresByTitle = const {},
   });
 
   /// Each title, with the TMDB id it carries when it has one.
@@ -56,6 +62,13 @@ class _SortedItemsApi implements ItemsApi {
 
   /// The most items one request answers with, whatever it asks for.
   final int? pageCap;
+  final bool includeTotal;
+  final Map<String, String> itemIds;
+  final Map<String, Map<String, dynamic>> userData;
+  final Future<void>? userDataGate;
+  final Map<String, List<String>> genresByTitle;
+  final genreRequests =
+      <({String? parent, List<String>? ids, List<String>? names})>[];
 
   @override
   Future<Map<String, dynamic>> getItems({
@@ -106,6 +119,8 @@ class _SortedItemsApi implements ItemsApi {
     bool? enableUserData,
   }) async {
     if (fails) throw StateError('offline');
+    genreRequests.add((parent: parentId, ids: genreIds, names: genres));
+    if (ids != null) await userDataGate;
     final start = startIndex ?? 0;
     final light = fields?.startsWith('ProviderIds') ?? false;
     if (light) {
@@ -117,25 +132,39 @@ class _SortedItemsApi implements ItemsApi {
     final unplayed = filters?.contains('IsUnplayed') ?? false;
     final sorted = [
       for (final title in [...titles, if (light) ...listedOnly])
-        if (!unplayed || !played.contains(title.$1)) title,
+        if ((!unplayed || !played.contains(title.$1)) &&
+            (genres == null ||
+                genres.any(
+                  (name) => (genresByTitle[title.$1] ?? []).contains(name),
+                )))
+          title,
     ]..sort((a, b) => a.$1.compareTo(b.$1));
     return {
-      'TotalRecordCount': sorted.length,
+      if (includeTotal) 'TotalRecordCount': sorted.length,
       'Items': [
         for (final (title, tmdb)
             in sorted.skip(start).take(min(limit ?? 100, pageCap ?? 100000)))
           {
-            'Id': '$parentId-$title',
+            'Id': itemIds[title] ?? '$parentId-$title',
+            'UserData': ?userData[title],
             'Name': title,
             'SortName': title,
             'Type': 'Movie',
             'ProviderIds': {'Tmdb': ?tmdb},
             'OriginalTitle': ?originals[title],
             'OfficialRating': ?ratings[title],
+            'Genres': ?genresByTitle[title],
           },
       ],
     };
   }
+
+  @override
+  Future<Map<String, dynamic>> getItem(
+    String id, {
+    String? fields,
+    String? mediaSourceId,
+  }) async => {'Id': id, 'Name': 'Library $id', 'CollectionType': 'movies'};
 
   /// Each server's library id stands in for the genre only it holds.
   @override
@@ -188,12 +217,16 @@ MergedLibrarySource _source(String serverId, _SortedItemsApi api) => (
 Future<LibraryBrowseViewModel> _viewModel(
   List<MergedLibrarySource> sources, {
   Future<MergedLibrary> Function()? lookup,
+  String? genreId,
+  String? genreName,
 }) async {
   SharedPreferences.setMockInitialValues({});
   final store = PreferenceStore();
   await store.init();
   return LibraryBrowseViewModel(
     libraryId: mergedLibraryId('movies'),
+    genreId: genreId,
+    overrideName: genreName,
     client: _FakeClient(_SortedItemsApi(const [])),
     prefs: UserPreferences(store),
     mdbListRepository: _FakeMdbListRepository(),
@@ -205,6 +238,251 @@ Future<LibraryBrowseViewModel> _viewModel(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'a merged genre filters every real library by name, not a server genre ID',
+    () async {
+      final a = _SortedItemsApi(
+        [('A Action', null), ('A Drama', null)],
+        genresByTitle: {
+          'A Action': ['Action', 'Adventure'],
+          'A Drama': ['Drama'],
+        },
+      );
+      final b = _SortedItemsApi(
+        [('B Action', null), ('B Horror', null)],
+        genresByTitle: {
+          'B Action': ['Action'],
+          'B Horror': ['Horror'],
+        },
+      );
+      final vm = await _viewModel(
+        [_source('a', a), _source('b', b)],
+        genreId: 'only-on-server-a',
+        genreName: 'Action',
+      );
+      addTearDown(vm.dispose);
+      await vm.load();
+      await vm.ensureAllItemsLoaded();
+
+      expect(vm.items.map((item) => item.name), ['A Action', 'B Action']);
+      await vm.toggleGenreFilter('Adventure');
+      await vm.ensureAllItemsLoaded();
+      expect(vm.items.map((item) => item.name), ['A Action']);
+      for (final (id, api) in [('a', a), ('b', b)]) {
+        expect(api.genreRequests, isNotEmpty);
+        for (final request in api.genreRequests) {
+          expect(request.parent, id);
+          expect(request.ids, isNull);
+          expect(request.names, ['Action']);
+        }
+      }
+    },
+  );
+
+  test('merged genre library selection scopes pages and copy index', () async {
+    final a = _SortedItemsApi(
+      [for (var i = 0; i < 90; i++) ('A$i', '${i + 1}')],
+      genresByTitle: {
+        for (var i = 0; i < 90; i++) 'A$i': ['Action'],
+      },
+    );
+    final b = _SortedItemsApi(
+      [('B Action', '1')],
+      genresByTitle: {
+        'B Action': ['Action'],
+      },
+    );
+    final vm = await _viewModel(
+      [_source('a', a), _source('b', b)],
+      genreId: 'a-action',
+      genreName: 'Action',
+    );
+    addTearDown(vm.dispose);
+    await vm.load();
+    await vm.ensureAllItemsLoaded();
+    expect(vm.totalCount, 90);
+    a.genreRequests.clear();
+    b.genreRequests.clear();
+    await vm.setLibraryFilter('a');
+    await vm.ensureAllItemsLoaded();
+    // Allow the copy-index read to finish too.
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.items, hasLength(90));
+    expect(vm.items.every((item) => item.serverId == 'a'), isTrue);
+    expect(vm.items.every((item) => copiesOf(item).length == 1), isTrue);
+    expect(b.genreRequests, isEmpty);
+    expect(a.genreRequests.map((request) => request.parent), everyElement('a'));
+    await vm.setLibraryFilter('b');
+    await vm.ensureAllItemsLoaded();
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.items.map((item) => item.name), ['B Action']);
+    expect(copiesOf(vm.items.single), hasLength(1));
+    expect(vm.totalCount, 1);
+    await vm.setLibraryFilter(null);
+    await vm.ensureAllItemsLoaded();
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.items, hasLength(90));
+    expect(
+      copiesOf(vm.items.singleWhere((item) => item.name == 'A0')),
+      hasLength(2),
+    );
+  });
+
+  test('merged genre picker distinguishes identical library IDs on different servers', () async {
+    final a = _SortedItemsApi(
+      [('A Action', '1')],
+      genresByTitle: {
+        'A Action': ['Action'],
+      },
+    );
+    final b = _SortedItemsApi(
+      [('B Action', '1')],
+      genresByTitle: {
+        'B Action': ['Action'],
+      },
+    );
+    final sourceA = _source('a', a);
+    final sourceB = _source('b', b);
+    final vm = await _viewModel(
+      [
+        (session: sourceA.session, libraryId: 'same'),
+        (session: sourceB.session, libraryId: 'same'),
+      ],
+      genreId: 'a-action',
+      genreName: 'Action',
+    );
+    addTearDown(vm.dispose);
+    await vm.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(vm.libraryFilter, isNull);
+    expect(vm.libraries.map((library) => library['Name']), [
+      'Library same (a)',
+      'Library same (b)',
+    ]);
+    final choices = vm.libraries
+        .map((library) => library['Id'] as String)
+        .toList();
+    expect(choices.toSet(), hasLength(2));
+    for (var i = 0; i < choices.length; i++) {
+      a.genreRequests.clear();
+      b.genreRequests.clear();
+      await vm.setLibraryFilter(choices[i]);
+      await vm.ensureAllItemsLoaded();
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.items.single.serverId, i == 0 ? 'a' : 'b');
+      expect(copiesOf(vm.items.single), hasLength(1));
+      expect((i == 0 ? b : a).genreRequests, isEmpty);
+      expect(
+        (i == 0 ? a : b).genreRequests.map((request) => request.parent),
+        everyElement('same'),
+      );
+    }
+    await vm.setLibraryFilter(null);
+    await vm.ensureAllItemsLoaded();
+    await Future<void>.delayed(Duration.zero);
+    expect(copiesOf(vm.items.single), hasLength(2));
+  });
+
+  test(
+    'a stale partial lookup cannot replace newer complete merged readers',
+    () async {
+      final old = Completer<MergedLibrary>();
+      final a = _source(
+        'a',
+        _SortedItemsApi([
+          for (var i = 0; i < 60; i++)
+            ('A${i.toString().padLeft(3, '0')}', null),
+        ]),
+      );
+      final b = _source(
+        'b',
+        _SortedItemsApi([
+          for (var i = 0; i < 60; i++)
+            ('B${i.toString().padLeft(3, '0')}', null),
+        ]),
+      );
+      var lookups = 0;
+      final vm = await _viewModel(
+        [],
+        lookup: () async => ++lookups == 1
+            ? await old.future
+            : (name: 'Complete', sources: [a, b], complete: true),
+      );
+      addTearDown(vm.dispose);
+      final stale = vm.load();
+      await pumpEventQueue();
+      await vm.load();
+      expect(vm.items, hasLength(75));
+
+      old.complete((name: 'Partial', sources: [a], complete: false));
+      await stale;
+      await vm.ensureAllItemsLoaded();
+
+      expect(vm.items, hasLength(120));
+      expect(vm.totalCount, 120);
+      expect(vm.items.where((item) => item.serverId == 'b'), hasLength(60));
+      expect(vm.hasMore, isFalse);
+    },
+  );
+
+  for (final reverse in [false, true]) {
+    test('merged user-data refresh keeps overlapping IDs separate '
+        '(reverse responses: $reverse)', () async {
+      userDataSync.reset();
+      final gates = [Completer<void>(), Completer<void>()];
+      final aData = <String, Map<String, dynamic>>{
+        'First': {'Played': true, 'IsFavorite': false},
+      };
+      final bData = <String, Map<String, dynamic>>{
+        'Second': {'Played': false, 'IsFavorite': true},
+      };
+      final a = _SortedItemsApi(
+        [('First', null)],
+        itemIds: {'First': '7'},
+        userData: aData,
+        userDataGate: gates[0].future,
+      );
+      final b = _SortedItemsApi(
+        [('Second', null)],
+        itemIds: {'Second': '7'},
+        userData: bData,
+        userDataGate: gates[1].future,
+      );
+      final vm = await _viewModel([_source('a', a), _source('b', b)]);
+      addTearDown(() {
+        vm.dispose();
+        userDataSync.reset();
+      });
+      await vm.load();
+      expect(vm.items.map((item) => item.isPlayed), [true, false]);
+
+      aData['First'] = {
+        'Played': true,
+        'IsFavorite': true,
+        'PlaybackPositionTicks': 42,
+        'PlayedPercentage': 25,
+      };
+      bData['Second'] = {
+        'Played': false,
+        'IsFavorite': false,
+        'PlaybackPositionTicks': 99,
+        'PlayedPercentage': 70,
+      };
+      userDataSync.publish('unrelated', {'Played': true});
+      final refresh = vm.syncUserDataIfStale();
+      gates[reverse ? 1 : 0].complete();
+      await pumpEventQueue();
+      expect(vm.items.map((item) => item.isPlayed), [true, false]);
+      gates[reverse ? 0 : 1].complete();
+      await refresh;
+
+      expect(vm.items.map((item) => item.isPlayed), [true, false]);
+      expect(vm.items.map((item) => item.isFavorite), [true, false]);
+      expect(vm.items.map((item) => item.playbackPositionTicks), [42, 99]);
+      expect(vm.items.map((item) => item.playedPercentage), [25, 70]);
+    });
+  }
 
   test(
     'every server pages in by name, with shared titles shown once',
@@ -239,6 +517,94 @@ void main() {
       final pages = a.requests.where((request) => request.$2 > 0);
       expect(pages.first.$1, 0);
       expect(pages.skip(1).every((request) => request.$1 > 0), isTrue);
+    },
+  );
+
+  test('merged paging reads past short pages with a reported total', () async {
+    final a = _SortedItemsApi([
+      for (var i = 0; i < 160; i++) ('a${i.toString().padLeft(3, '0')}', null),
+    ], pageCap: 50);
+    final vm = await _viewModel([
+      _source('a', a),
+      _source('b', _SortedItemsApi(const [('zebra', null)])),
+    ]);
+    addTearDown(vm.dispose);
+    await vm.load();
+
+    await vm.ensureAllItemsLoaded();
+
+    expect(vm.items.map((item) => item.name), [
+      for (var i = 0; i < 160; i++) 'a${i.toString().padLeft(3, '0')}',
+      'zebra',
+    ]);
+    expect(vm.totalCount, 161);
+    expect(vm.hasMore, isFalse);
+    expect(a.requests.map((request) => request.$1), [0, 50, 100, 150]);
+  });
+
+  for (final unknownTitle in ['aardvark', 'zebra']) {
+    test(
+      'a capped merged reader keeps paging with an unknown-total source ($unknownTitle)',
+      () async {
+        final a = _SortedItemsApi([
+          for (var i = 0; i < 160; i++)
+            ('a${i.toString().padLeft(3, '0')}', null),
+        ], pageCap: 50);
+        final b = _SortedItemsApi([(unknownTitle, null)], includeTotal: false);
+        final vm = await _viewModel([_source('a', a), _source('b', b)]);
+        addTearDown(vm.dispose);
+        await vm.load();
+        expect(vm.hasMore, isTrue);
+        await vm.ensureAllItemsLoaded();
+        final expected = [
+          for (var i = 0; i < 160; i++) 'a${i.toString().padLeft(3, '0')}',
+          unknownTitle,
+        ]..sort();
+        expect(vm.items.map((item) => item.name), expected);
+        expect(vm.totalCount, 161);
+        expect(vm.hasMore, isFalse);
+        expect(a.requests.map((request) => request.$1), [0, 50, 100, 150]);
+        expect(b.requests, hasLength(1));
+      },
+    );
+  }
+
+  test(
+    'merged paging stops on a short page without a reported total',
+    () async {
+      final a = _SortedItemsApi(const [
+        ('alpha', null),
+        ('beta', null),
+      ], includeTotal: false);
+      final vm = await _viewModel([
+        _source('a', a),
+        _source('b', _SortedItemsApi(const [('zebra', null)])),
+      ]);
+      addTearDown(vm.dispose);
+      await vm.load();
+      await vm.ensureAllItemsLoaded();
+
+      expect(vm.items.map((item) => item.name), ['alpha', 'beta', 'zebra']);
+      expect(vm.hasMore, isFalse);
+      expect(a.requests, hasLength(1));
+    },
+  );
+
+  test(
+    'an empty page stops a source even when its total claims more',
+    () async {
+      final a = _SortedItemsApi(const [('missing', null)], pageCap: 0);
+      final vm = await _viewModel([
+        _source('a', a),
+        _source('b', _SortedItemsApi(const [('zebra', null)])),
+      ]);
+      addTearDown(vm.dispose);
+      await vm.load();
+      await vm.ensureAllItemsLoaded();
+
+      expect(vm.items.map((item) => item.name), ['zebra']);
+      expect(vm.hasMore, isFalse);
+      expect(a.requests, hasLength(1));
     },
   );
 
@@ -298,6 +664,66 @@ void main() {
       expect(vm.items.last.name, 'zzzz');
     },
   );
+
+  for (final count in [100, 250]) {
+    test(
+      'the first merged load passes $count deferred translated copies',
+      () async {
+        final vm = await _viewModel([
+          _source(
+            'a',
+            _SortedItemsApi([
+              for (var i = 0; i < count; i++)
+                ('Z${i.toString().padLeft(3, '0')}', '${i + 1}'),
+            ]),
+          ),
+          _source(
+            'b',
+            _SortedItemsApi([
+              for (var i = 0; i < count; i++)
+                ('A${i.toString().padLeft(3, '0')}', '${i + 1}'),
+            ]),
+          ),
+        ]);
+        addTearDown(vm.dispose);
+
+        await vm.load();
+
+        expect(vm.state, LibraryBrowseState.ready);
+        expect(vm.items, isNotEmpty);
+        expect(vm.items.every((item) => item.serverId == 'a'), isTrue);
+        expect(vm.items.first.name, 'Z000');
+        expect(copiesOf(vm.items.first).map((copy) => copy.serverId), [
+          'a',
+          'b',
+        ]);
+        await vm.ensureAllItemsLoaded();
+        expect(vm.items, hasLength(count));
+        expect(vm.totalCount, count);
+        expect(vm.hasMore, isFalse);
+      },
+    );
+  }
+
+  test('an initial page of deferred copies is recovered when preferred cards '
+      'never arrive', () async {
+    final titles = [
+      for (var i = 0; i < 100; i++)
+        ('A${i.toString().padLeft(3, '0')}', '${i + 1}'),
+    ];
+    final vm = await _viewModel([
+      _source('a', _SortedItemsApi(const [], listedOnly: titles)),
+      _source('b', _SortedItemsApi(titles)),
+    ]);
+    addTearDown(vm.dispose);
+
+    await vm.load();
+
+    expect(vm.state, LibraryBrowseState.ready);
+    expect(vm.items, hasLength(100));
+    expect(vm.items.every((item) => item.serverId == 'b'), isTrue);
+    expect(vm.hasMore, isFalse);
+  });
 
   group("the first server's copy is the card", () {
     List<MergedLibrarySource> sources({

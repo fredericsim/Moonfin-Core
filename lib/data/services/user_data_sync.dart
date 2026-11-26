@@ -2,12 +2,19 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:get_it/get_it.dart';
 import 'package:server_core/server_core.dart';
 
+import '../../util/server_url.dart';
 import '../models/aggregated_item.dart';
+import 'media_server_client_factory.dart';
+
+typedef _UserDataKey = ({String? serverId, String itemId});
 
 /// The newest watched state, resume position and favourite flag this client
 /// knows about, for every item a screen is still holding.
+/// Item IDs are scoped to their source server. Calls without an explicit
+/// server use the active client.
 ///
 /// A list carries the user data the server sent when it was fetched, and a
 /// screen parked under a pushed route never asks again, so finishing an episode
@@ -27,13 +34,36 @@ class UserDataSync extends ChangeNotifier {
   /// a long browse can't grow this without end.
   static const _maxTrackedItems = 2000;
 
-  final Map<String, Map<String, dynamic>> _userData = {};
-  final Map<String, int> _itemRevisions = {};
-  final Map<String, bool> _pendingFavorites = {};
-  final Map<String, bool> _confirmedFavorites = {};
+  final Map<_UserDataKey, Map<String, dynamic>> _userData = {};
+  final Map<_UserDataKey, int> _itemRevisions = {};
+  final Map<_UserDataKey, bool> _pendingFavorites = {};
+  final Map<_UserDataKey, bool> _confirmedFavorites = {};
   int _revision = 0;
   int get revision => _revision;
-  int revisionFor(String itemId) => _itemRevisions[itemId] ?? 0;
+  int revisionFor(String itemId, {String? serverId}) =>
+      _itemRevisions[_key(itemId, serverId: serverId)] ?? 0;
+
+  // Older lists carry URLs while merged lists carry saved server IDs. Both
+  // must address the same server, without mixing equal item IDs across servers.
+  String? _serverScope(String? serverId) {
+    final getIt = GetIt.instance;
+    if (serverId == null || serverId.isEmpty) {
+      return getIt.isRegistered<MediaServerClient>()
+          ? normalizeServerBaseUrl(getIt<MediaServerClient>().baseUrl)
+          : null;
+    }
+    if (serverId.contains('://')) return normalizeServerBaseUrl(serverId);
+    if (getIt.isRegistered<MediaServerClientFactory>()) {
+      final client = getIt<MediaServerClientFactory>().getClientIfExists(
+        serverId,
+      );
+      if (client != null) return normalizeServerBaseUrl(client.baseUrl);
+    }
+    return serverId;
+  }
+
+  _UserDataKey _key(String itemId, {String? serverId}) =>
+      (serverId: _serverScope(serverId), itemId: itemId);
 
   /// Bumped by [reset], so work queued for one user can tell it is stale.
   int get session => _session;
@@ -41,49 +71,63 @@ class UserDataSync extends ChangeNotifier {
 
   /// Shows [value] as the favorite flag straight away, before the server
   /// has it, so a quick next toggle starts from what the user last chose.
-  void requestFavorite(String itemId, bool value) {
-    if (!_pendingFavorites.containsKey(itemId)) {
-      _confirmedFavorites[itemId] = favoriteFor(itemId) ?? !value;
+  void requestFavorite(String itemId, bool value, {String? serverId}) {
+    final key = _key(itemId, serverId: serverId);
+    if (!_pendingFavorites.containsKey(key)) {
+      _confirmedFavorites[key] =
+          favoriteFor(itemId, serverId: serverId) ?? !value;
     }
-    _pendingFavorites[itemId] = value;
-    publish(itemId, {'IsFavorite': value});
+    _pendingFavorites[key] = value;
+    publish(itemId, {'IsFavorite': value}, serverId: serverId);
   }
 
   /// The flag the user last asked for, while the server is catching up.
-  bool? pendingFavorite(String itemId) => _pendingFavorites[itemId];
+  bool? pendingFavorite(String itemId, {String? serverId}) =>
+      _pendingFavorites[_key(itemId, serverId: serverId)];
 
   /// The flag the server last confirmed for a change still in progress.
-  bool? confirmedFavorite(String itemId) => _confirmedFavorites[itemId];
+  bool? confirmedFavorite(String itemId, {String? serverId}) =>
+      _confirmedFavorites[_key(itemId, serverId: serverId)];
 
   /// The server now holds [value]. The change ends if that's what was asked.
-  void confirmFavorite(String itemId, bool value) {
-    _confirmedFavorites[itemId] = value;
-    if (_pendingFavorites[itemId] != value) return;
-    _pendingFavorites.remove(itemId);
-    _confirmedFavorites.remove(itemId);
-    _itemRevisions[itemId] = ++_revision;
+  void confirmFavorite(String itemId, bool value, {String? serverId}) {
+    final key = _key(itemId, serverId: serverId);
+    _confirmedFavorites[key] = value;
+    if (_pendingFavorites[key] != value) return;
+    _pendingFavorites.remove(key);
+    _confirmedFavorites.remove(key);
+    _itemRevisions[key] = ++_revision;
   }
 
   /// Drops the change and shows what the server last confirmed.
-  void failFavoriteChange(String itemId) {
-    final confirmed = _confirmedFavorites.remove(itemId);
-    if (_pendingFavorites.remove(itemId) == null) return;
-    _itemRevisions[itemId] = ++_revision;
-    if (confirmed != null) publish(itemId, {'IsFavorite': confirmed});
+  void failFavoriteChange(String itemId, {String? serverId}) {
+    final key = _key(itemId, serverId: serverId);
+    final confirmed = _confirmedFavorites.remove(key);
+    if (_pendingFavorites.remove(key) == null) return;
+    _itemRevisions[key] = ++_revision;
+    if (confirmed != null) {
+      publish(itemId, {'IsFavorite': confirmed}, serverId: serverId);
+    }
   }
 
-  bool favoriteChangePending(String itemId) =>
-      _pendingFavorites.containsKey(itemId);
+  bool favoriteChangePending(String itemId, {String? serverId}) =>
+      _pendingFavorites.containsKey(_key(itemId, serverId: serverId));
   StreamSubscription<ServerWebSocketMessage>? _socketSubscription;
 
   /// The synced favorite flag, or null when none is known.
-  bool? favoriteFor(String itemId) =>
-      _pendingFavorites[itemId] ?? _userData[itemId]?['IsFavorite'] as bool?;
+  bool? favoriteFor(String itemId, {String? serverId}) {
+    final key = _key(itemId, serverId: serverId);
+    return _pendingFavorites[key] ?? _userData[key]?['IsFavorite'] as bool?;
+  }
 
   /// Records this client's own change before the server confirms it. Merges, so
   /// a patch that only carries `Played` leaves a known play count alone.
-  void publish(String itemId, Map<String, dynamic> userData) {
-    publishAll({itemId: userData});
+  void publish(
+    String itemId,
+    Map<String, dynamic> userData, {
+    String? serverId,
+  }) {
+    publishAll({itemId: userData}, serverId: serverId);
   }
 
   /// [replace] is for values that came from the server, which always sends an
@@ -92,12 +136,14 @@ class UserDataSync extends ChangeNotifier {
   void publishAll(
     Map<String, Map<String, dynamic>> changes, {
     bool replace = false,
+    String? serverId,
   }) {
     if (changes.isEmpty) return;
     var changed = false;
     changes.forEach((itemId, patch) {
       if (itemId.isEmpty || patch.isEmpty) return;
-      final existing = _userData[itemId];
+      final key = _key(itemId, serverId: serverId);
+      final existing = _userData[key];
       // The server leaves out a percentage it has cleared, and a missing key
       // would keep the old progress bar on the item it is merged into. Only a
       // whole user data record says that, and every server's record carries
@@ -110,12 +156,12 @@ class UserDataSync extends ChangeNotifier {
               ...patch,
             }
           : <String, dynamic>{...?existing, ...patch};
-      if (_pendingFavorites.containsKey(itemId)) {
-        merged['IsFavorite'] = _pendingFavorites[itemId];
+      if (_pendingFavorites.containsKey(key)) {
+        merged['IsFavorite'] = _pendingFavorites[key];
       }
       if (existing != null && mapEquals(existing, merged)) return;
-      _userData[itemId] = merged;
-      _itemRevisions[itemId] = ++_revision;
+      _userData[key] = merged;
+      _itemRevisions[key] = ++_revision;
       changed = true;
     });
     if (!changed) return;
@@ -126,7 +172,12 @@ class UserDataSync extends ChangeNotifier {
   /// Returns [item] itself when nothing newer is known, so callers can compare
   /// with `identical` and skip rebuilding a list that did not move.
   AggregatedItem apply(AggregatedItem item) {
-    final patch = _userData[item.id];
+    final patch =
+        _userData[_key(item.id, serverId: item.serverId)] ??
+        // Preserve unbound single-server use before a client is registered.
+        (_serverScope(null) == null
+            ? _userData[(serverId: null, itemId: item.id)]
+            : null);
     if (patch == null) return item;
     final current = item.rawData['UserData'];
     if (current is Map && _alreadyHolds(current, patch)) return item;
@@ -162,8 +213,11 @@ class UserDataSync extends ChangeNotifier {
   /// socket never mentions, and changes that landed while the socket was down.
   Future<void> refreshFromServer(
     MediaServerClient client,
-    Iterable<String> itemIds,
-  ) async {
+    Iterable<String> itemIds, {
+    String? serverId,
+  }) async {
+    final source = serverId ?? client.baseUrl;
+    final session = _session;
     final all = <String>{
       for (final id in itemIds)
         if (id.isNotEmpty) id,
@@ -197,7 +251,8 @@ class UserDataSync extends ChangeNotifier {
           if (id == null || id.isEmpty || userData is! Map) continue;
           changes[id] = Map<String, dynamic>.from(userData);
         }
-        publishAll(changes, replace: true);
+        if (_session != session) return;
+        publishAll(changes, replace: true, serverId: source);
       } catch (_) {
         // A dropped connection or a library the user lost access to. The next
         // visit asks again.
@@ -207,8 +262,13 @@ class UserDataSync extends ChangeNotifier {
 
   /// Follows the session websocket for the signed-in user. Safe to call again
   /// on a reconnect or a user switch, which drops the previous subscription.
-  void bindTo(Stream<ServerWebSocketMessage> events, {String? userId}) {
+  void bindTo(
+    Stream<ServerWebSocketMessage> events, {
+    String? userId,
+    String? serverId,
+  }) {
     _socketSubscription?.cancel();
+    final source = _serverScope(serverId);
     final expectedUser = _normalizeId(userId);
     _socketSubscription = events.listen((event) {
       if (event is! UserDataChangedMessage) return;
@@ -227,7 +287,7 @@ class UserDataSync extends ChangeNotifier {
         final patch = Map<String, dynamic>.from(entry)..remove('ItemId');
         if (patch.isNotEmpty) changes[id] = patch;
       }
-      publishAll(changes, replace: true);
+      publishAll(changes, replace: true, serverId: source);
     });
   }
 

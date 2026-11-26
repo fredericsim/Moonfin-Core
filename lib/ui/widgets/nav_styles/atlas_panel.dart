@@ -4,10 +4,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:moonfin_design/moonfin_design.dart';
+import 'package:server_core/server_core.dart';
 
+import '../../../auth/models/user.dart';
+import '../../../auth/repositories/user_repository.dart';
 import '../../../data/models/aggregated_item.dart';
 import '../../../data/models/aggregated_library.dart';
 import '../../../data/repositories/seerr_repository.dart';
+import '../../../data/repositories/multi_server_repository.dart';
+import '../../../data/services/user_data_sync.dart';
+import '../../../data/utils/blocked_ratings.dart';
+import '../../../data/utils/merged_copies.dart';
+import '../../../data/viewmodels/seerr_discover_view_model.dart';
+import '../../../preference/seerr_preferences.dart';
+import '../../../preference/user_preferences.dart';
 import '../../../data/services/media_server_client_factory.dart';
 import '../../../data/services/seerr/seerr_api_models.dart';
 import '../../../l10n/app_localizations.dart';
@@ -34,9 +44,14 @@ class AtlasTile {
     this.imageUrl,
     this.library,
     this.progress,
+    this.item,
+    this.seerrItem,
   });
 
   final String title;
+  // Retained so cached tiles are checked against current content filters.
+  final AggregatedItem? item;
+  final SeerrDiscoverItem? seerrItem;
   final String? subtitle;
   final String? imageUrl;
 
@@ -105,7 +120,10 @@ List<AtlasLink> atlasLibraryLinks(
     case 'movies':
     case 'tvshows':
       links.addAll([
-        AtlasLink(l10n.genres, Destinations.libraryGenresOf(lib.id)),
+        AtlasLink(
+          l10n.genres,
+          Destinations.libraryGenresOf(lib.id, serverId: lib.serverId),
+        ),
         AtlasLink(
           l10n.favorites,
           Destinations.library(lib.id, favorites: true, serverId: lib.serverId),
@@ -188,10 +206,26 @@ AtlasPanelSpec atlasLibrariesSpec(
   );
 }
 
-final _cache = <String, (DateTime, Future<AtlasPanelData>)>{};
+typedef _PanelCacheKey = (int, String?, String?, String);
+
+_PanelCacheKey _dataKey(AtlasPanelSpec spec) {
+  final users = GetIt.instance.isRegistered<UserRepository>()
+      ? GetIt.instance<UserRepository>()
+      : null;
+  final user = users?.currentUser;
+  return (userDataSync.session, user?.serverId, user?.id, spec.key);
+}
+
+final _cache = <_PanelCacheKey, (DateTime, Future<AtlasPanelData>)>{};
 
 Future<AtlasPanelData> _cachedData(AtlasPanelSpec spec) {
-  final hit = _cache[spec.key];
+  final key = _dataKey(spec);
+  // Drop data from previous users/profiles instead of retaining it for the TTL.
+  _cache.removeWhere(
+    (other, _) =>
+        other.$1 != key.$1 || other.$2 != key.$2 || other.$3 != key.$3,
+  );
+  final hit = _cache[key];
   if (hit != null &&
       DateTime.now().difference(hit.$1) < const Duration(minutes: 5)) {
     return hit.$2;
@@ -199,10 +233,10 @@ Future<AtlasPanelData> _cachedData(AtlasPanelSpec spec) {
   late final Future<AtlasPanelData> future;
   future = spec.load!().catchError((Object _) {
     // A failed load isn't kept, so the next open tries again.
-    if (identical(_cache[spec.key]?.$2, future)) _cache.remove(spec.key);
+    if (identical(_cache[key]?.$2, future)) _cache.remove(key);
     return const AtlasPanelData();
   });
-  _cache[spec.key] = (DateTime.now(), future);
+  _cache[key] = (DateTime.now(), future);
   return future;
 }
 
@@ -231,45 +265,86 @@ Future<AtlasPanelData> _loadLibrary(
   AggregatedLibrary lib, {
   required bool resume,
 }) async {
-  final api = GetIt.instance<MediaServerClientFactory>()
-      .clientForServerOrActive(lib.serverId)
-      .itemsApi;
+  final factory = GetIt.instance<MediaServerClientFactory>();
+  final mergedType = mergedLibraryType(lib.id);
+  final List<({MediaServerClient client, String serverId, String libraryId})>
+  sources;
+  if (mergedType != null) {
+    final merged = await GetIt.instance<MultiServerRepository>().mergedLibrary(
+      mergedType,
+    );
+    if (merged.sources.isEmpty && !merged.complete) {
+      throw StateError('No server answered for ${lib.id}');
+    }
+    sources = [
+      for (final source in merged.sources)
+        (
+          client: source.session.client,
+          serverId: source.session.server.id,
+          libraryId: source.libraryId,
+        ),
+    ];
+  } else {
+    sources = [
+      (
+        client: factory.clientForServerOrActive(lib.serverId),
+        serverId: lib.serverId,
+        libraryId: lib.id,
+      ),
+    ];
+  }
   Object? failure;
   Future<Map<String, dynamic>> safe(Future<Map<String, dynamic>> f) =>
       f.catchError((Object error) {
         failure = error;
         return <String, dynamic>{};
       });
-  final results = await Future.wait([
-    resume
-        ? safe(
-            api.getResumeItems(
-              parentId: lib.id,
-              limit: 2,
-              fields: 'PrimaryImageAspectRatio',
+  final batches = await Future.wait([
+    for (final source in sources)
+      () async {
+        final api = source.client.itemsApi;
+        final results = await Future.wait([
+          resume
+              ? safe(
+                  api.getResumeItems(
+                    parentId: source.libraryId,
+                    limit: 2,
+                    fields: 'PrimaryImageAspectRatio,OfficialRating',
+                    enableImageTypes: 'Primary,Backdrop,Thumb',
+                    imageTypeLimit: 1,
+                  ),
+                )
+              : Future.value(<String, dynamic>{}),
+          safe(
+            api.getLatestItems(
+              parentId: source.libraryId,
+              limit: 4,
+              fields: 'PrimaryImageAspectRatio,OfficialRating',
               enableImageTypes: 'Primary,Backdrop,Thumb',
               imageTypeLimit: 1,
             ),
-          )
-        : Future.value(<String, dynamic>{}),
-    safe(
-      api.getLatestItems(
-        parentId: lib.id,
-        limit: 4,
-        fields: 'PrimaryImageAspectRatio',
-        enableImageTypes: 'Primary,Backdrop,Thumb',
-        imageTypeLimit: 1,
-      ),
-    ),
+          ),
+        ]);
+        return (
+          resume: _itemsOf(results[0], source.serverId),
+          latest: _itemsOf(results[1], source.serverId),
+        );
+      }(),
   ]);
-  final resumeItems = _itemsOf(results[0], lib.serverId);
-  final latestItems = _itemsOf(results[1], lib.serverId);
+  List<AggregatedItem> interleave(List<List<AggregatedItem>> lists) => [
+    for (var i = 0; lists.any((list) => i < list.length); i++)
+      for (final list in lists)
+        if (i < list.length) list[i],
+  ];
+  final resumeItems = interleave([for (final batch in batches) batch.resume]);
+  final latestItems = interleave([for (final batch in batches) batch.latest]);
   final error = failure;
   if (error != null && resumeItems.isEmpty && latestItems.isEmpty) throw error;
   return AtlasPanelData(
     cards: [
       for (final item in resumeItems.take(2))
         AtlasTile(
+          item: item,
           title: item.type == 'Episode'
               ? (item.seriesName ?? item.name)
               : item.name,
@@ -284,6 +359,7 @@ Future<AtlasPanelData> _loadLibrary(
     posters: [
       for (final item in latestItems.take(4))
         AtlasTile(
+          item: item,
           title: item.name,
           imageUrl: navPosterArtUrl(item),
           route: _itemRoute(item),
@@ -291,6 +367,12 @@ Future<AtlasPanelData> _loadLibrary(
     ],
   );
 }
+
+bool _isVisibleSeerrItem(SeerrDiscoverItem item) =>
+    SeerrDiscoverViewModel.isVisibleInDiscover(
+      item,
+      blockNsfw: GetIt.instance<SeerrPreferences>().blockNsfw,
+    );
 
 Future<AtlasPanelData> _loadSeerr() async {
   final repo = await GetIt.instance.getAsync<SeerrRepository>();
@@ -300,11 +382,12 @@ Future<AtlasPanelData> _loadSeerr() async {
     mediaType: r.mediaType,
     title: r.title ?? r.name,
   );
-  final results = page.results;
+  final results = page.results.where(_isVisibleSeerrItem);
   return AtlasPanelData(
     cards: [
       for (final r in results.where((r) => r.backdropPath != null).take(2))
         AtlasTile(
+          seerrItem: r,
           title: r.title ?? r.name ?? '',
           subtitle: (r.releaseDate ?? r.firstAirDate)?.split('-').first,
           imageUrl: 'https://image.tmdb.org/t/p/w780${r.backdropPath}',
@@ -345,30 +428,80 @@ class AtlasPanel extends StatefulWidget {
 
 class _AtlasPanelState extends State<AtlasPanel> {
   AtlasPanelData _data = const AtlasPanelData();
+  _PanelCacheKey? _loadedKey;
+  UserPreferences? _prefs;
+  StreamSubscription<User?>? _userSubscription;
+
+  AtlasPanelData get _visibleData {
+    if (_loadedKey != _dataKey(widget.spec)) return const AtlasPanelData();
+    final allowed = withoutBlockedItems([
+      for (final tile in [..._data.cards, ..._data.posters]) ?tile.item,
+    ]).toSet();
+    bool visible(AtlasTile tile) =>
+        (tile.item == null || allowed.contains(tile.item)) &&
+        (tile.seerrItem == null || _isVisibleSeerrItem(tile.seerrItem!));
+    return AtlasPanelData(
+      cards: _data.cards.where(visible).toList(),
+      posters: _data.posters.where(visible).toList(),
+    );
+  }
+
+  void _onPreferencesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onUserChanged() {
+    if (!mounted || _loadedKey == _dataKey(widget.spec)) return;
+    setState(() => _data = const AtlasPanelData());
+    final users = GetIt.instance<UserRepository>();
+    if (users.currentUser == null) {
+      _loadedKey = _dataKey(widget.spec);
+      return;
+    }
+    _load();
+  }
 
   @override
   void initState() {
     super.initState();
+    if (GetIt.instance.isRegistered<UserPreferences>()) {
+      _prefs = GetIt.instance<UserPreferences>()
+        ..addListener(_onPreferencesChanged);
+    }
+    if (GetIt.instance.isRegistered<UserRepository>()) {
+      _userSubscription = GetIt.instance<UserRepository>().currentUserStream
+          .listen((_) => _onUserChanged());
+    }
     _load();
   }
 
   @override
   void didUpdateWidget(AtlasPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.spec.key != widget.spec.key) {
+    if (_loadedKey != _dataKey(widget.spec)) {
       _data = const AtlasPanelData();
       _load();
     }
   }
 
   void _load() {
+    final key = _dataKey(widget.spec);
+    _loadedKey = key;
     if (widget.spec.load == null) return;
-    final key = widget.spec.key;
     unawaited(
       _cachedData(widget.spec).then((data) {
-        if (mounted && widget.spec.key == key) setState(() => _data = data);
+        if (mounted && _dataKey(widget.spec) == key) {
+          setState(() => _data = data);
+        }
       }),
     );
+  }
+
+  @override
+  void dispose() {
+    _prefs?.removeListener(_onPreferencesChanged);
+    _userSubscription?.cancel();
+    super.dispose();
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -396,34 +529,63 @@ class _AtlasPanelState extends State<AtlasPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // Sizes are laid out for a 720 point tall screen and scale from there.
-    final s = widget.compact
-        ? 1.0
-        : (MediaQuery.sizeOf(context).height / 720).clamp(0.8, 1.3);
-    final radius = Radius.circular(widget.compact ? 20 : 18 * s);
-    return Container(
-      margin: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 40 * s),
-      padding: widget.compact
-          ? const EdgeInsets.fromLTRB(0, 16, 0, 20)
-          : EdgeInsets.fromLTRB(32 * s, 26 * s, 32 * s, 28 * s),
-      decoration: BoxDecoration(
-        color: kAtlasPanelColor,
-        borderRadius: BorderRadius.vertical(bottom: radius),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x8C000000),
-            blurRadius: 60,
-            offset: Offset(0, 30),
+    // Keep the desktop dimensions when they fit. Smaller windows use the
+    // stacked layout, with bounded artwork sizes so it also fits vertically.
+    final s = (MediaQuery.sizeOf(context).height / 720).clamp(0.8, 1.3);
+    final data = _visibleData;
+    final cards = data.cards.length;
+    final posters = data.posters.length;
+    final hasPreview = cards > 0 || posters > 0;
+    final chromeWidth = (80 + 64 + 220) * s; // Margins, padding, and links.
+    final dividerWidth = hasPreview ? 40 * s + 1 : 0;
+    final cardsWidth = cards > 0
+        ? (cards * 200 + (cards - 1) * 16 + 40) * s
+        : 0;
+    final postersWidth = posters > 0
+        ? (posters * 92 + (posters - 1) * 12) * s
+        : 0;
+    final wideWidth = chromeWidth + dividerWidth + cardsWidth + postersWidth;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = widget.compact || constraints.maxWidth < wideWidth;
+        final radius = Radius.circular(compact ? 20 : 18 * s);
+        return Container(
+          margin: EdgeInsets.symmetric(horizontal: compact ? 0 : 40 * s),
+          padding: compact
+              ? const EdgeInsets.fromLTRB(0, 16, 0, 20)
+              : EdgeInsets.fromLTRB(32 * s, 26 * s, 32 * s, 28 * s),
+          decoration: BoxDecoration(
+            color: kAtlasPanelColor,
+            borderRadius: BorderRadius.vertical(bottom: radius),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x8C000000),
+                blurRadius: 60,
+                offset: Offset(0, 30),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: FocusScope(
-        node: widget.scopeNode,
-        onKeyEvent: _onKey,
-        child: FocusTraversalGroup(
-          child: widget.compact ? _compactBody() : _wideBody(s),
-        ),
-      ),
+          child: FocusScope(
+            node: widget.scopeNode,
+            onKeyEvent: _onKey,
+            child: FocusTraversalGroup(
+              child: SingleChildScrollView(
+                child: compact
+                    ? Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: widget.compact ? double.infinity : 600,
+                          ),
+                          child: _compactBody(),
+                        ),
+                      )
+                    : _wideBody(s),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -447,8 +609,9 @@ class _AtlasPanelState extends State<AtlasPanel> {
   );
 
   Widget _wideBody(double s) {
-    final cards = _data.cards;
-    final posters = _data.posters;
+    final visible = _visibleData;
+    final cards = visible.cards;
+    final posters = visible.posters;
     final links = widget.spec.links;
     return DefaultTextStyle.merge(
       style: const TextStyle(color: Colors.white),
@@ -494,7 +657,10 @@ class _AtlasPanelState extends State<AtlasPanel> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (widget.spec.cardsTitle case final title?)
-                  _heading(title, 15 * s),
+                  SizedBox(
+                    width: (cards.length * 200 + (cards.length - 1) * 16) * s,
+                    child: _heading(title, 15 * s),
+                  ),
                 SizedBox(height: 12 * s),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -537,8 +703,9 @@ class _AtlasPanelState extends State<AtlasPanel> {
   }
 
   Widget _compactBody() {
-    final cards = _data.cards;
-    final posters = _data.posters;
+    final visible = _visibleData;
+    final cards = visible.cards;
+    final posters = visible.posters;
     final links = widget.spec.links;
     return DefaultTextStyle.merge(
       style: const TextStyle(color: Colors.white),

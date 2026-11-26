@@ -50,7 +50,11 @@ class _EpisodeItemsApi extends Fake implements ItemsApi {
     String itemId, {
     String? mediaSourceId,
     String? fields,
-  }) async => {'Id': itemId, 'Type': 'Episode', 'MediaType': 'Video'};
+  }) async => {
+    'Id': itemId,
+    'Type': itemId == 'song' ? 'Audio' : 'Episode',
+    'MediaType': itemId == 'song' ? 'Audio' : 'Video',
+  };
 }
 
 class _EpisodeClient extends Fake implements MediaServerClient {
@@ -92,7 +96,8 @@ class _EpisodeClientFactory extends Fake implements MediaServerClientFactory {
 
 /// Stops the manager when its page goes, as the Live TV player does.
 class _LiveTvPage extends StatefulWidget {
-  const _LiveTvPage();
+  const _LiveTvPage({this.path = Destinations.liveTvPlayer});
+  final String path;
   @override
   State<_LiveTvPage> createState() => _LiveTvPageState();
 }
@@ -107,7 +112,7 @@ class _LiveTvPageState extends State<_LiveTvPage> {
   }
 
   @override
-  Widget build(BuildContext context) => const Text(Destinations.liveTvPlayer);
+  Widget build(BuildContext context) => Text(widget.path);
 }
 
 class _FakeSocketHandler extends Fake implements SocketHandler {}
@@ -876,16 +881,22 @@ void main() {
   }
 
   group('remote Stop', () {
-    Future<GoRouter> mountRouter(WidgetTester tester) async {
+    Future<GoRouter> mountRouter(WidgetTester tester, {bool stopVideoOnDispose = false}) async {
       final router = GoRouter(
         initialLocation: Destinations.home,
         routes: [
           for (final path in [
             Destinations.home,
             Destinations.search,
-            Destinations.videoPlayer,
+            Destinations.audioPlayer,
           ])
             GoRoute(path: path, builder: (_, _) => Text(path)),
+          GoRoute(
+            path: Destinations.videoPlayer,
+            builder: (_, _) => stopVideoOnDispose
+                ? const _LiveTvPage(path: Destinations.videoPlayer)
+                : const Text(Destinations.videoPlayer),
+          ),
           GoRoute(
             path: Destinations.liveTvPlayer,
             builder: (_, _) => const _LiveTvPage(),
@@ -911,6 +922,77 @@ void main() {
       _FakePluginSyncService(),
       router: router,
     );
+
+    for (final current in [
+      Destinations.audioPlayer,
+      Destinations.videoPlayer,
+    ]) {
+      for (final itemId in ['song', 'episode']) {
+        testWidgets('PlayNow $itemId uses the matching player from $current', (
+          tester,
+        ) async {
+          final target = itemId == 'song'
+              ? Destinations.audioPlayer
+              : Destinations.videoPlayer;
+          final stopsOnDispose =
+              current == Destinations.videoPlayer && target != current;
+          final router = await mountRouter(
+            tester,
+            stopVideoOnDispose: stopsOnDispose,
+          );
+          final receiver = receiverFor(router, clients: _EpisodeClientFactory())
+            ..setActiveSessionForTest('server', 'user');
+          unawaited(router.push(current));
+          await tester.pumpAndSettle();
+
+          final playing = receiver.handleRemoteCommandForTest(
+            PlayMessage(itemIds: [itemId]),
+          );
+          await tester.pumpAndSettle();
+          await playing;
+          await tester.pumpAndSettle();
+
+          expect(router.state.uri.path, target);
+          expect(router.routerDelegate.currentConfiguration.matches.length, 2);
+          expect(manager.calls, [if (stopsOnDispose) 'stop', 'play']);
+          await receiver.handleRemoteCommandForTest(
+            PlaystateMessage(command: 'Stop'),
+          );
+          await tester.pumpAndSettle();
+          expect(router.state.uri.path, Destinations.home);
+          expect(router.routerDelegate.currentConfiguration.matches.length, 1);
+          await tester.pumpWidget(const SizedBox());
+          receiver.dispose();
+          router.dispose();
+        });
+      }
+    }
+
+    testWidgets('Stop cancels PlayNow while an incompatible player closes', (
+      tester,
+    ) async {
+      final router = await mountRouter(tester, stopVideoOnDispose: true);
+      final receiver = receiverFor(router, clients: _EpisodeClientFactory())
+        ..setActiveSessionForTest('server', 'user');
+      unawaited(router.push(Destinations.videoPlayer));
+      await tester.pumpAndSettle();
+      final playing = receiver.handleRemoteCommandForTest(
+        PlayMessage(itemIds: const ['song']),
+      );
+      await tester.pump();
+      expect(router.state.uri.path, Destinations.home);
+      await receiver.handleRemoteCommandForTest(
+        PlaystateMessage(command: 'Stop'),
+      );
+      await tester.pumpAndSettle();
+      await playing;
+      expect(manager.calls, isNot(contains('play')));
+      expect(router.state.uri.path, Destinations.home);
+      expect(router.routerDelegate.currentConfiguration.matches.length, 1);
+      await tester.pumpWidget(const SizedBox());
+      receiver.dispose();
+      router.dispose();
+    });
 
     testWidgets('closes the player it stopped', (tester) async {
       final router = await mountRouter(tester);

@@ -7,6 +7,7 @@ import 'package:moonfin/ui/navigation/destinations.dart';
 import 'package:moonfin/ui/widgets/nav_styles/atlas_panel.dart';
 import 'package:moonfin/ui/widgets/nav_styles/nav_art.dart';
 import 'package:moonfin/ui/widgets/nav_styles/nav_entry.dart';
+import 'package:moonfin/ui/widgets/nav_styles/nav_focusable.dart';
 import 'package:moonfin/ui/widgets/nav_styles/reel_nav.dart';
 
 void main() {
@@ -85,7 +86,11 @@ void main() {
         l10n.favorites,
       ]);
       expect(links.first.route, Destinations.library('abc', serverId: 's1'));
-      expect(links[1].route, Destinations.libraryGenresOf('abc'));
+      expect(
+        links[1].route,
+        Destinations.libraryGenresOf('abc', serverId: 's1'),
+      );
+      expect(Uri.parse(links[1].route).queryParameters['serverId'], 's1');
     });
 
     test('music links to its category screens', () {
@@ -115,7 +120,12 @@ void main() {
   });
 
   group('AtlasPanel', () {
-    Future<void> open(WidgetTester tester, AtlasPanelSpec spec) async {
+    Future<void> open(
+      WidgetTester tester,
+      AtlasPanelSpec spec, {
+      double? panelWidth,
+      List<String>? opened,
+    }) async {
       final scope = FocusScopeNode();
       final first = FocusNode();
       addTearDown(scope.dispose);
@@ -125,12 +135,21 @@ void main() {
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
-            body: AtlasPanel(
-              spec: spec,
-              scopeNode: scope,
-              firstFocus: first,
-              onExit: () {},
-              onOpen: (_, {required topLevel}) {},
+            body: Padding(
+              padding: const EdgeInsets.only(top: 80),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: panelWidth,
+                  child: AtlasPanel(
+                    spec: spec,
+                    scopeNode: scope,
+                    firstFocus: first,
+                    onExit: () {},
+                    onOpen: (route, {required topLevel}) => opened?.add(route),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -152,6 +171,112 @@ void main() {
 
     const data = AtlasPanelData(
       cards: [AtlasTile(title: 'Loaded Card', route: '/item')],
+    );
+
+    AtlasPanelSpec fullPreview(String key) => AtlasPanelSpec(
+      key: key,
+      title: 'Movies',
+      links: const [
+        AtlasLink('Browse All', '/library'),
+        AtlasLink('Genres', '/genres'),
+        AtlasLink('Favorites', '/favorites'),
+      ],
+      cardsTitle: 'Continue',
+      postersTitle: 'Recently Added',
+      load: () async => AtlasPanelData(
+        cards: [
+          for (var i = 0; i < 2; i++)
+            AtlasTile(title: 'Continue $i', route: '/continue/$i'),
+        ],
+        posters: [
+          for (var i = 0; i < 4; i++)
+            AtlasTile(title: 'Poster $i', route: '/poster/$i'),
+        ],
+      ),
+    );
+
+    Finder tile(String title) => find.byWidgetPredicate(
+      (widget) => widget is NavFocusable && widget.semanticLabel == title,
+    );
+
+    testWidgets(
+      'desktop preview fits when resizing between wide and 1024 pixel windows',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1920, 1080);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        await open(tester, fullPreview('test:responsive'));
+        final first = tester
+            .widget<AtlasPanel>(find.byType(AtlasPanel))
+            .firstFocus;
+        first.requestFocus();
+        await tester.pumpAndSettle();
+        for (final size in [
+          const Size(1920, 1080),
+          const Size(1024, 768),
+          const Size(1280, 720),
+          const Size(1920, 1080),
+        ]) {
+          tester.view.physicalSize = size;
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(first.hasFocus, isTrue);
+          for (final title in [
+            'Continue 0',
+            'Continue 1',
+            'Poster 0',
+            'Poster 1',
+            'Poster 2',
+            'Poster 3',
+          ]) {
+            final rect = tester.getRect(tile(title));
+            expect(rect.left, greaterThanOrEqualTo(0));
+            expect(rect.right, lessThanOrEqualTo(size.width));
+            expect(rect.bottom, lessThanOrEqualTo(size.height));
+            expect(tile(title).hitTestable(), findsOneWidget);
+          }
+        }
+      },
+    );
+
+    testWidgets(
+      'desktop preview uses its constrained width inside a larger window',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1920, 1080);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        await open(tester, fullPreview('test:constrained'), panelWidth: 1024);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final panel = tester.getRect(find.byType(AtlasPanel));
+        expect(panel.width, 1024);
+        for (var i = 0; i < 4; i++) {
+          final rect = tester.getRect(tile('Poster $i'));
+          expect(rect.left, greaterThanOrEqualTo(panel.left));
+          expect(rect.right, lessThanOrEqualTo(panel.right));
+        }
+      },
+    );
+
+    testWidgets(
+      'short desktop windows can scroll to and open the last poster',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(800, 480);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final opened = <String>[];
+        await open(tester, fullPreview('test:short'), opened: opened);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.ensureVisible(tile('Poster 3'));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(tile('Poster 3')).bottom, lessThanOrEqualTo(480));
+        await tester.tap(tile('Poster 3'));
+        expect(opened, ['/poster/3']);
+      },
     );
 
     testWidgets('a failed load tries again on the next open', (tester) async {

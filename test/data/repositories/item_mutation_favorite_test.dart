@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get_it/get_it.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:moonfin/data/repositories/item_mutation_repository.dart';
 import 'package:moonfin/data/services/user_data_sync.dart';
@@ -28,11 +29,16 @@ void main() {
     when(() => api.markFavorite(any())).thenAnswer(held);
     when(() => api.unmarkFavorite(any())).thenAnswer(held);
     final client = _Client();
+    when(() => client.baseUrl).thenReturn('http://server');
     when(() => client.userLibraryApi).thenReturn(api);
+    GetIt.instance.registerSingleton<MediaServerClient>(client);
     repository = ItemMutationRepository(client);
   });
 
-  tearDown(userDataSync.reset);
+  tearDown(() async {
+    userDataSync.reset();
+    await GetIt.instance.reset();
+  });
 
   /// What a favorite button does: flip whatever is showing.
   Future<void> toggle() => repository.setFavorite(
@@ -41,6 +47,28 @@ void main() {
   );
 
   Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+  test('concurrent favorites for matching IDs reach both servers', () async {
+    final otherApi = _UserLibraryApi();
+    when(() => otherApi.unmarkFavorite('ch')).thenAnswer((_) async {});
+    final otherClient = _Client();
+    when(() => otherClient.baseUrl).thenReturn('http://other');
+    when(() => otherClient.userLibraryApi).thenReturn(otherApi);
+    final other = ItemMutationRepository(otherClient);
+
+    final runs = [
+      repository.setFavorite('ch', isFavorite: true),
+      other.setFavorite('ch', isFavorite: false),
+    ];
+    await settle();
+    verify(() => api.markFavorite('ch')).called(1);
+    verify(() => otherApi.unmarkFavorite('ch')).called(1);
+    requests.single.complete();
+    await Future.wait(runs);
+
+    expect(userDataSync.favoriteFor('ch'), isTrue);
+    expect(userDataSync.favoriteFor('ch', serverId: 'http://other'), isFalse);
+  });
 
   test('toggles made while a request is out end on the last choice', () async {
     final runs = [toggle()];

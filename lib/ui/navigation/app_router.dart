@@ -378,7 +378,10 @@ final appRouter = GoRouter(
           path: 'genres',
           builder: (context, state) {
             final libraryId = state.pathParameters['libraryId']!;
-            return LibraryGenresScreen(libraryId: libraryId);
+            return LibraryGenresScreen(
+              libraryId: libraryId,
+              serverId: state.uri.queryParameters['serverId'],
+            );
           },
         ),
         GoRoute(

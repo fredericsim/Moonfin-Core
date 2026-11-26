@@ -215,6 +215,18 @@ void main() {
   late UserPreferences prefs;
   late RemoteMediaNotificationService service;
 
+  void restartService() {
+    service.dispose();
+    service = RemoteMediaNotificationService(
+      socketHandler: socket,
+      castService: castService,
+      prefs: prefs,
+      activeClient: () => client,
+      enabledOnPlatform: true,
+    );
+    service.start();
+  }
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     final store = PreferenceStore();
@@ -238,7 +250,7 @@ void main() {
     await socket.close();
   });
 
-  test('is off by default until user opts in', () async {
+  test('enabling notifications takes effect after restart', () async {
     expect(prefs.get(UserPreferences.remoteMediaNotification), isFalse);
 
     service.start();
@@ -251,8 +263,36 @@ void main() {
 
     await prefs.set(UserPreferences.remoteMediaNotification, true);
     await Future<void>.delayed(Duration.zero);
+    expect(service.isEnabled, isFalse);
+    expect(socket.subscriptions, isEmpty);
+    service.start(); // Calling start twice cannot change the native policy.
+    expect(service.isEnabled, isFalse);
+
+    restartService();
+    expect(service.isEnabled, isTrue);
     expect(socket.subscriptions, contains('Sessions'));
   });
+
+  for (final initiallyEnabled in [false, true]) {
+    test('audio-service configuration stays stable through startup '
+        '(enabled: $initiallyEnabled)', () async {
+      await prefs.set(UserPreferences.remoteMediaNotification, initiallyEnabled);
+      final holdForeground = service.configureForAudioService();
+      // AudioService.init can yield between reading its config and start().
+      await prefs.set(UserPreferences.remoteMediaNotification, !initiallyEnabled);
+      service.start();
+      await service.refresh();
+
+      expect(holdForeground, initiallyEnabled);
+      expect(service.isEnabled, holdForeground);
+      expect(service.configureForAudioService(), holdForeground);
+      expect(socket.subscriptions.contains('Sessions'), initiallyEnabled);
+      expect(service.keepsSocketAlive, initiallyEnabled);
+
+      restartService();
+      expect(service.isEnabled, !initiallyEnabled);
+    });
+  }
 
   test('subscribes to Sessions and mirrors playing TV session', () async {
     await prefs.set(UserPreferences.remoteMediaNotification, true);
@@ -296,7 +336,7 @@ void main() {
     expect(service.keepsSocketAlive, isTrue);
   });
 
-  test('toggling preference off clears active session and unsubscribes', () async {
+  test('disabling notifications takes effect after restart', () async {
     await prefs.set(UserPreferences.remoteMediaNotification, true);
     service.start();
     socket.eventsController.add(SessionsMessage([_tvSession()]));
@@ -306,6 +346,17 @@ void main() {
     await prefs.set(UserPreferences.remoteMediaNotification, false);
     await Future<void>.delayed(Duration.zero);
 
+    expect(service.isEnabled, isTrue);
+    expect(service.activeSession, isNotNull);
+    expect(service.keepsSocketAlive, isTrue);
+    expect(socket.unsubscriptions, isEmpty);
+    // Cast changes and explicit refreshes also use the startup configuration.
+    castService.remotePositionNotifier.value = 10;
+    await service.refresh();
+    expect(service.isEnabled, isTrue);
+
+    restartService();
+    expect(service.isEnabled, isFalse);
     expect(service.activeSession, isNull);
     expect(service.keepsSocketAlive, isFalse);
     expect(socket.unsubscriptions, contains('Sessions'));
@@ -621,17 +672,17 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(service.activeSession?.itemId, 'ep-2');
 
-    // Disabling setting after dismissing clears dismissed state and drops keepsSocketAlive.
+    // A setting change cannot alter the current audio-service policy or
+    // clear a dismissal until the app restarts.
     service.dismissCurrent();
     expect(service.keepsSocketAlive, isTrue);
     await prefs.set(UserPreferences.remoteMediaNotification, false);
     await Future<void>.delayed(Duration.zero);
-    expect(service.keepsSocketAlive, isFalse);
-
-    // Re-enabling shows the active session cleanly instead of staying suppressed.
+    expect(service.activeSession, isNull);
+    expect(service.keepsSocketAlive, isTrue);
     await prefs.set(UserPreferences.remoteMediaNotification, true);
     await Future<void>.delayed(Duration.zero);
-    expect(service.activeSession?.itemId, 'ep-2');
+    expect(service.activeSession, isNull);
     expect(service.keepsSocketAlive, isTrue);
   });
 

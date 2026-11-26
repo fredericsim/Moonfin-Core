@@ -2,12 +2,61 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:moonfin/preference/preference_constants.dart';
 import 'package:moonfin/preference/user_preferences.dart';
+import 'package:moonfin/platform/web_runtime_config_model.dart';
+import 'package:moonfin/platform/web_runtime_config_stub.dart' as runtime;
 import 'package:moonfin/ui/widgets/playback/loading_animation_widget.dart';
 import 'package:moonfin/ui/widgets/playback/player_loading_overlay.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 
 void main() {
+  tearDown(() {
+    runtime.webRuntimeConfig = WebRuntimeConfig.defaults;
+  });
+
+  group('Loading logo flag', () {
+    test('defaults to a spinner and allows explicitly enabling the logo', () {
+      expect(WebRuntimeConfig.fromJson({}).showLoadingLogo, isFalse);
+      expect(
+        WebRuntimeConfig.fromJson({'showLoadingLogo': true}).showLoadingLogo,
+        isTrue,
+      );
+      expect(
+        WebRuntimeConfig.fromJson({'showLoadingLogo': false}).showLoadingLogo,
+        isFalse,
+      );
+    });
+
+    for (final enabled in [false, true]) {
+      testWidgets('logo preference respects showLoadingLogo=$enabled', (
+        tester,
+      ) async {
+        runtime.webRuntimeConfig = WebRuntimeConfig.fromJson({
+          'showLoadingLogo': enabled,
+        });
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: Scaffold(
+              body: PlayerLoadingOverlay(
+                customImage: LoadingAnimationImage.moonfinLogo,
+                customShowText: false,
+              ),
+            ),
+          ),
+        );
+
+        expect(
+          find.byType(MoonfinLogoAnimation),
+          enabled ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byType(StockSpinnerAnimation),
+          enabled ? findsNothing : findsOneWidget,
+        );
+      });
+    }
+  });
+
   group('Loading Animation Enums & Extensions', () {
     test('LoadingAnimationSizeX returns expected dimensions', () {
       expect(LoadingAnimationSize.thumbnail.pixelSize, 36.0);

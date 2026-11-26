@@ -62,6 +62,30 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   bool get isMergedBrowse => loadMergedLibrary != null;
 
   List<MergedLibrarySource> _mergedSources = const [];
+
+  // Library IDs are only unique within a server. The picker stores both,
+  // while the server requests continue using the real library ID.
+  String _mergedLibraryFilterId(MergedLibrarySource source) =>
+      jsonEncode([source.session.server.id, source.libraryId]);
+
+  List<MergedLibrarySource> get _filteredMergedSources {
+    final selected = _libraryFilter;
+    if (!isFilterBrowse || selected == null || selected == libraryId) {
+      return _mergedSources;
+    }
+    final scoped = _mergedSources
+        .where((source) => _mergedLibraryFilterId(source) == selected)
+        .toList();
+    if (scoped.isNotEmpty) return scoped;
+    // Older callers use a real library ID from the active server's views.
+    return _mergedSources
+        .where(
+          (source) => source.libraryId == selected &&
+              source.session.client.baseUrl == _client.baseUrl,
+        )
+        .toList();
+  }
+
   bool _mergedLookupComplete = false;
   List<_MergedReader> _mergedReaders = const [];
 
@@ -432,6 +456,9 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     required int generation,
   }) async {
     items = withoutBlockedItems(items);
+    if (isMergedBrowse && isGenreBrowse && _genreFilters.isNotEmpty) {
+      items = items.where(_matchesAdditionalMergedGenres).toList();
+    }
     if (!isPlaylistBrowse) return items;
 
     // A playlist the summary can't settle costs a request of its own, so keep a
@@ -581,13 +608,21 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     }
     _syncingUserData = true;
     try {
-      final idsByClient = <MediaServerClient, List<String>>{};
+      final idsBySource =
+          <({String serverId, MediaServerClient client}), List<String>>{};
       for (final item in _items) {
-        idsByClient.putIfAbsent(_clientFor(item), () => []).add(item.id);
+        idsBySource.putIfAbsent(
+          (serverId: item.serverId, client: _clientFor(item)),
+          () => [],
+        ).add(item.id);
       }
       await Future.wait([
-        for (final MapEntry(key: client, value: ids) in idsByClient.entries)
-          userDataSync.refreshFromServer(client, ids),
+        for (final MapEntry(key: source, value: ids) in idsBySource.entries)
+          userDataSync.refreshFromServer(
+            source.client,
+            ids,
+            serverId: source.serverId,
+          ),
       ]);
     } finally {
       _syncingUserData = false;
@@ -663,11 +698,13 @@ class LibraryBrowseViewModel extends ChangeNotifier {
 
       if (isMergedBrowse && !_mergedLookupComplete) {
         final merged = await loadMergedLibrary!();
+        if (_disposed || generation != _listGeneration) return;
         if (merged.sources.isEmpty) {
           throw StateError('No server answered for $libraryId');
         }
         _libraryName = merged.name;
         _mergedSources = merged.sources;
+        _libraries = const [];
         _collectionType = mergedLibraryType(libraryId);
         _libraryMetaResolved = true;
         // A server that didn't answer is asked again on the next load.
@@ -682,11 +719,11 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       if (isFilterBrowse) {
         _libraryName = overrideName ?? '';
         if (!_initialLibraryFilterSet) {
-          _libraryFilter = libraryId.isEmpty ? null : libraryId;
+          _libraryFilter = libraryId.isEmpty || isMergedBrowse ? null : libraryId;
           _initialLibraryFilterSet = true;
         }
         if (_libraries.isEmpty) _loadLibraries();
-        if (libraryId.isNotEmpty) {
+        if (libraryId.isNotEmpty && !isMergedBrowse) {
           try {
             final parentData = await _client.itemsApi
                 .getItem(libraryId, fields: _libraryMetaFields);
@@ -733,7 +770,19 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       _refreshPosterSizeFromScope();
 
       await imageTypeSync;
+      if (isMergedBrowse && (_disposed || generation != _listGeneration)) return;
       await _fetchPage(0, generation: generation);
+      // Translated copies can sort before every preferred card and leave an
+      // empty first page. The empty screen cannot request a viewport fill.
+      while (isMergedBrowse &&
+          !_disposed &&
+          generation == _listGeneration &&
+          _items.isEmpty &&
+          hasMore) {
+        final fetchedBefore = _fetchedCount;
+        await loadMore(notify: false);
+        if (_fetchedCount == fetchedBefore) break;
+      }
       if (generation != _listGeneration) return;
       _state = LibraryBrowseState.ready;
     } catch (e) {
@@ -1088,7 +1137,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       ) => _fetchItemsWithFallback(
         client: client,
         parentId: parentId,
-        genreIds: genreId != null ? [genreId!] : null,
+        genreIds: _browseGenreIds,
         studios: studioName != null ? [studioName!] : null,
         includeItemTypes: includeTypes,
         excludeItemTypes: excludeTypes,
@@ -1105,7 +1154,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       );
       final lightRead = isMergedBrowse && startIndex == 0
           ? _lightReadFor(
-              genreIds: genreId != null ? [genreId!] : null,
+              genreIds: _browseGenreIds,
               studios: studioName != null ? [studioName!] : null,
               includeTypes: includeTypes,
               excludeTypes: excludeTypes,
@@ -1146,7 +1195,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
         if (fetchDirectories)
           _getFilteredItems(
             parentId: _effectiveParentId,
-            genreIds: genreId != null ? [genreId!] : null,
+            genreIds: _browseGenreIds,
             studios: studioName != null ? [studioName!] : null,
             includeItemTypes: kDirectoryItemTypes,
             sortBy: 'SortName',
@@ -1243,7 +1292,14 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       _totalCount = totalFromServer! + _directoryCount - _filteredOutCount;
       _hasMoreFromPageSize = _items.length + filtered.length < _totalCount;
     } else {
-      _hasMoreFromPageSize = rawItems.length == pageSize;
+      // A merged page can stop short when a capped reader needs refilling.
+      // Its buffered and unread items, rather than this page's size, decide
+      // whether another page is available.
+      _hasMoreFromPageSize = isMergedBrowse
+          ? _mergedReaders.any(
+              (reader) => reader.buffer.isNotEmpty || !reader.done,
+            )
+          : rawItems.length == pageSize;
       final loadedCount = _items.length + filtered.length;
       _totalCount = loadedCount + (_hasMoreFromPageSize ? 1 : 0);
     }
@@ -1291,7 +1347,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       final response = await _getFilteredItems(
         ids: chunk,
         parentId: _effectiveParentId,
-        genreIds: genreId != null ? [genreId!] : null,
+        genreIds: _browseGenreIds,
         studios: studioName != null ? [studioName!] : null,
         recursive: true,
         includeItemTypes: includeItemTypes,
@@ -1394,7 +1450,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   /// index can be kept when the viewer changes what they block.
   bool _skipIndexedCopy(AggregatedItem copy) =>
       _renderedItemIds.contains('${copy.serverId}|${copy.id}') ||
-      withoutBlockedItems([copy]).isEmpty;
+      withoutBlockedItems([copy]).isEmpty ||
+      !_matchesAdditionalMergedGenres(copy);
 
   void _joinCopyIndexWhenRead(_LightRead read, int generation) {
     unawaited(
@@ -1449,7 +1506,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     required List<String>? seriesStatus,
     required bool? isFavorite,
   }) {
-    final sources = _mergedSources;
+    final sources = _filteredMergedSources;
     // As JSON, so lists whose values hold a comma can't read as other lists.
     final query = jsonEncode([
       for (final source in sources)
@@ -1465,6 +1522,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       isFavorite,
       // What _getFilteredItems adds to every query on its own.
       _genreNamesFilter,
+      if (isMergedBrowse && isGenreBrowse) _genreFilters.toList(),
       _officialRatingsFilter,
       _tagsFilter,
       _yearsFilter,
@@ -1504,7 +1562,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
           startIndex: start,
           limit: _lightPageSize,
           recursive: recursive,
-          fields: 'ProviderIds,OriginalTitle',
+          fields: 'ProviderIds,OriginalTitle,Genres',
           imageTypeLimit: 0,
           filters: filters,
           seriesStatus: seriesStatus,
@@ -1515,17 +1573,16 @@ class LibraryBrowseViewModel extends ChangeNotifier {
         final page = response['Items'] as List? ?? const [];
         for (final raw in page) {
           if (raw is! Map || (raw['Id']?.toString() ?? '').isEmpty) continue;
-          items.add(
-            AggregatedItem(
-              id: raw['Id'].toString(),
-              serverId: serverId,
-              // Trimmed, so a large library doesn't sit in memory whole.
-              rawData: {
-                for (final field in _lightFields)
-                  if (raw[field] != null) field: raw[field],
-              },
-            ),
+          final item = AggregatedItem(
+            id: raw['Id'].toString(),
+            serverId: serverId,
+            // Trimmed, so a large library doesn't sit in memory whole.
+            rawData: {
+              for (final field in _lightFields)
+                if (raw[field] != null) field: raw[field],
+            },
           );
+          if (_matchesAdditionalMergedGenres(item)) items.add(item);
         }
         start += page.length;
         // A short page ends the list unless the server counts more after it,
@@ -1549,12 +1606,14 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     'ProviderIds',
     'OriginalTitle',
     'OfficialRating',
+    'Genres',
   ];
 
   /// Every title the first server of a merged browse holds, which is the
   /// signed-in one whenever it has this library.
   Future<PreferredCopies?> _readPreferredCopies(_LightRead read) async {
-    final sources = _mergedSources;
+    final sources = read._sources;
+    if (sources.isEmpty) return null;
     final serverId = sources.first.session.server.id;
     final own = [
       for (var i = 0; i < sources.length; i++)
@@ -1583,7 +1642,7 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   ) async {
     if (startIndex == 0) {
       _mergedReaders = [
-        for (final source in _mergedSources) _MergedReader(source),
+        for (final source in _filteredMergedSources) _MergedReader(source),
       ];
     }
     // Held here, since a reload swaps in new readers while this one waits.
@@ -1658,6 +1717,30 @@ class LibraryBrowseViewModel extends ChangeNotifier {
 
   Future<void> _loadLibraries() async {
     try {
+      if (isMergedBrowse) {
+        final sources = _mergedSources;
+        final libraries = await Future.wait([
+          for (final source in sources)
+            () async {
+              Map<String, dynamic> data = const {};
+              try {
+                data = await source.session.client.itemsApi.getItem(
+                  source.libraryId,
+                  fields: _libraryMetaFields,
+                );
+              } catch (_) {}
+              return <String, dynamic>{
+                'Id': _mergedLibraryFilterId(source),
+                'Name': '${data['Name'] ?? source.libraryId} '
+                    '(${source.session.server.name})',
+              };
+            }(),
+        ]);
+        if (_disposed || !identical(sources, _mergedSources)) return;
+        _libraries = libraries;
+        notifyListeners();
+        return;
+      }
       final response = await _client.userViewsApi.getUserViews();
       final items = (response['Items'] as List?) ?? [];
       _libraries = items.cast<Map<String, dynamic>>().where((lib) {
@@ -1671,6 +1754,10 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   Future<void> setLibraryFilter(String? value) async {
     if (_libraryFilter == value) return;
     _libraryFilter = value;
+    if (isMergedBrowse) {
+      await load();
+      return;
+    }
     _collectionType = null;
     if (value != null) {
       try {
@@ -2055,8 +2142,21 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   List<String>? get _tagsFilter =>
       _tagFilters.isEmpty ? null : _tagFilters.toList();
 
-  List<String>? get _genreNamesFilter =>
-      _genreFilters.isEmpty ? null : _genreFilters.toList();
+  bool _matchesAdditionalMergedGenres(AggregatedItem item) =>
+      !isMergedBrowse || !isGenreBrowse || _genreFilters.isEmpty ||
+      item.genres.any(_genreFilters.contains);
+
+  // Genre IDs belong to individual servers. A merged genre route carries
+  // its name so every real source can answer the same filter.
+  List<String>? get _browseGenreIds =>
+      isMergedBrowse || genreId == null ? null : [genreId!];
+
+  List<String>? get _genreNamesFilter {
+    if (isMergedBrowse && isGenreBrowse && (overrideName?.isNotEmpty ?? false)) {
+      return [overrideName!];
+    }
+    return _genreFilters.isEmpty ? null : _genreFilters.toList();
+  }
 
   List<String>? get _audioLanguagesFilter =>
       _audioLanguageFilters.isEmpty ? null : _audioLanguageFilters.toList();
@@ -2527,7 +2627,10 @@ class _MergedReader {
       }
       _offset += raws.length;
       total = response['TotalRecordCount'] as int?;
-      done = raws.length < limit || (total != null && _offset >= total!);
+      // A server may cap its response below the requested limit. Its count
+      // takes precedence, but an empty page still ends a stalled reader.
+      done = raws.isEmpty ||
+          (total != null ? _offset >= total! : raws.length < limit);
     } catch (_) {
       // The other servers carry on, and this one counts only what it gave.
       done = true;

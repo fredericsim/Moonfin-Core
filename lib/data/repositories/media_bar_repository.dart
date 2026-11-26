@@ -517,7 +517,13 @@ class MediaBarRepository {
       if (itemTypes == null || itemTypes.contains('Movie'))
         released(const ['Movie'], _poolSize),
     ]);
-    final items = batches.expand((batch) => batch);
+    // Both batches are newest first. Alternate media types before the slide
+    // limit, so a large series pool cannot crowd every movie out of a mixed source.
+    final items = [
+      for (var i = 0; batches.any((batch) => i < batch.length); i++)
+        for (final batch in batches)
+          if (i < batch.length) batch[i],
+    ];
     return (hideWatched ?? false)
         ? items.where((item) => !isRawItemWatchedForRecentRow(item)).toList()
         : items.toList();
@@ -627,7 +633,11 @@ class MediaBarRepository {
       if (itemTypes == null || itemTypes.contains('Movie'))
         _fetchNewReleaseMovies(parentId: parentId),
     ]);
-    return batches.expand((batch) => batch).toList();
+    return [
+      for (var i = 0; batches.any((batch) => i < batch.length); i++)
+        for (final batch in batches)
+          if (i < batch.length) batch[i],
+    ];
   }
 
   /// Series with episodes that aired within the window, newest first. A series'
