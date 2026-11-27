@@ -240,10 +240,31 @@ class MediaKitPlayerBackend extends PlayerBackend
 
   static bool _passthroughActive(UserPreferences prefs) {
     return passthroughCodecsFromSet(
-      prefs.resolvedPassthroughCodecs(),
+      passthroughCodecsFor(prefs),
       downmixToStereo: prefs.get(UserPreferences.downmixToStereo),
     ).isNotEmpty;
   }
+
+  /// mpv can't filter a bitstream, so Night Mode decodes passthrough tracks.
+  static Set<PassthroughCodec> passthroughCodecsFor(UserPreferences prefs) =>
+      _nightModeOn(prefs)
+      ? const <PassthroughCodec>{}
+      : prefs.resolvedPassthroughCodecs();
+
+  // The Android libmpv is built without acompressor and alimiter, so adding
+  // the filter there stops playback.
+  static bool _nightModeOn(UserPreferences prefs) =>
+      !PlatformDetection.isAndroid && prefs.get(UserPreferences.audioNightMode);
+
+  static const String _nightModeLabel = '@moonfin-night';
+
+  // ffmpeg wants linear values, so this is a -30 dB threshold, +10 dB of
+  // makeup, a 6 dB knee and a -1 dB limit. level=0 stops the limiter from
+  // raising the output back to full scale.
+  @visibleForTesting
+  static const String nightModeFilter =
+      '$_nightModeLabel:lavfi=[acompressor=threshold=0.0316:ratio=4:attack=5:'
+      'release=250:makeup=3.162:knee=2,alimiter=limit=0.891:level=0]';
 
   bool _isStale = false;
   // Held the way media_kit normalizes it, since that is what its playlist
@@ -1019,6 +1040,7 @@ class MediaKitPlayerBackend extends PlayerBackend
     }
     // A hwdec line in the user's mpv.conf still wins over this one.
     await _applyCustomMpvConfIfEnabled(force: hwdec != null);
+    await _applyNightMode();
     await _applyAssOverrideMode();
 
     if (_player.platform is NativePlayer) {
@@ -1932,30 +1954,69 @@ class MediaKitPlayerBackend extends PlayerBackend
     } catch (_) {}
   }
 
-  /// A PipeWire output that can't take a bitstream can leave mpv stuck at the
-  /// start: the bundled mpv 0.37 has no SPDIF in its PipeWire driver and
-  /// never starts after its own PCM fallback, and 0.41 keeps reopening an
-  /// output that refuses the format. Decoding the track gets it playing.
+  /// A PipeWire output that can't take a bitstream leaves the audio silent:
+  /// the bundled mpv 0.37 has no SPDIF in its PipeWire driver and can stall
+  /// at the start, and 0.41 keeps reopening an output that refuses the format
+  /// while the video plays on. Decoding the track brings the sound back.
   /// audio-spdif then stays empty until the passthrough settings change, so
-  /// the next file doesn't stall the same way.
+  /// the next file doesn't go silent the same way.
   Future<void> _applyLinuxPassthroughFallbackIfNeeded(int generation) async {
-    if (!PlatformDetection.isLinux) return;
-    final spdif = _appliedAudioPassthroughProperties?['audio-spdif'] ?? '';
-    if (spdif.isEmpty) return;
-    await Future<void>.delayed(_linuxPassthroughStartTimeout);
-    final native = _player.platform;
-    if (native is! NativePlayer || !_ownsPlayback(generation)) return;
-    final format = await _tryNativeGetProperty(native, 'audio-params/format');
-    if (format == null || !format.startsWith('spdif')) return;
-    // A slow restart also leaves the core idle, but its output is open.
-    if (await _tryNativeGetProperty(native, 'core-idle') != 'yes' ||
-        await _tryNativeGetProperty(native, 'pause') != 'no' ||
-        await _tryNativeGetProperty(native, 'paused-for-cache') != 'no' ||
-        await _tryNativeGetProperty(native, 'current-ao') != null) {
+    if (!PlatformDetection.isLinux ||
+        !_prefs.get(UserPreferences.passthroughSilentFallback)) {
       return;
     }
-    if (!_ownsPlayback(generation)) return;
-    debugPrint('[audio] $format output never started, decoding instead');
+    final spdif = _appliedAudioPassthroughProperties?['audio-spdif'] ?? '';
+    if (spdif.isEmpty) return;
+    final native = _player.platform;
+    if (native is! NativePlayer) return;
+    // Only the latest check counts, so a quick second track switch isn't
+    // judged by the first switch's timer.
+    final check = ++_linuxPassthroughCheck;
+    String? format;
+    // mpv has no audio position while no output plays the bitstream. A seek
+    // or a reopened output only clears it for a moment, so check twice.
+    for (final wait in const [
+      _linuxPassthroughStartTimeout,
+      Duration(milliseconds: 500),
+    ]) {
+      await Future<void>.delayed(wait);
+      if (!_ownsPlayback(generation) || check != _linuxPassthroughCheck) {
+        return;
+      }
+      format = await _tryNativeGetProperty(native, 'audio-params/format');
+      if (format == null || !format.startsWith('spdif')) return;
+      if (_player.state.buffering) {
+        // mpv leaves a cache pause by itself, with no resume or track switch
+        // to start another check, so check again once it has.
+        try {
+          await _player.stream.buffering.firstWhere((b) => !b);
+        } catch (_) {
+          return;
+        }
+        if (check == _linuxPassthroughCheck) {
+          unawaited(_applyLinuxPassthroughFallbackIfNeeded(generation));
+        }
+        return;
+      }
+      if (await _tryNativeGetProperty(native, 'pause') != 'no' ||
+          await _tryNativeGetProperty(native, 'paused-for-cache') != 'no' ||
+          await _tryNativeGetProperty(native, 'audio-pts') != null) {
+        return;
+      }
+      // A slow start also has no audio position yet, but its output is open
+      // and the video waits for it. Silent output either plays the video on
+      // (0.41) or stalls with no output at all (0.37).
+      if (await _tryNativeGetProperty(native, 'core-idle') != 'no' &&
+          await _tryNativeGetProperty(native, 'current-ao') != null) {
+        return;
+      }
+    }
+    if (!_ownsPlayback(generation) ||
+        check != _linuxPassthroughCheck ||
+        !_prefs.get(UserPreferences.passthroughSilentFallback)) {
+      return;
+    }
+    debugPrint('[audio] $format output never played, decoding instead');
     await _nativeSetProperty(native, 'audio-spdif', '');
     // Before mpv 0.41, audio-spdif only takes effect once the audio decoder
     // is recreated, which selecting the track again does. Queued with
@@ -1967,6 +2028,8 @@ class MediaKitPlayerBackend extends PlayerBackend
       await _nativeSetProperty(native, 'aid', aid);
     });
   }
+
+  int _linuxPassthroughCheck = 0;
 
   Future<void> _audioTrackChanges = Future<void>.value();
 
@@ -2030,7 +2093,7 @@ class MediaKitPlayerBackend extends PlayerBackend
     try {
       final native = _player.platform as NativePlayer;
       final properties = passthroughMpvPropertiesFromSet(
-        _prefs.resolvedPassthroughCodecs(),
+        passthroughCodecsFor(_prefs),
         downmixToStereo: _prefs.get(UserPreferences.downmixToStereo),
         // Windows needs exclusive mode to bitstream. PipeWire can't link an
         // exclusive stream while anything else plays, so Linux goes silent.
@@ -2040,6 +2103,8 @@ class MediaKitPlayerBackend extends PlayerBackend
       if (mapEquals(_appliedAudioPassthroughProperties, properties)) {
         return;
       }
+      // A check still sampling would judge, and clear, the old setting.
+      ++_linuxPassthroughCheck;
 
       var allApplied = true;
 
@@ -2069,6 +2134,8 @@ class MediaKitPlayerBackend extends PlayerBackend
       } else {
         _appliedAudioPassthroughProperties = null;
       }
+      // The new setting can be just as silent, so check it again.
+      unawaited(_applyLinuxPassthroughFallbackIfNeeded(_playbackGeneration));
     } catch (_) {}
   }
 
@@ -2148,6 +2215,15 @@ class MediaKitPlayerBackend extends PlayerBackend
     unawaited(_drainAudioPassthroughApplyQueue());
   }
 
+  Future<void> _applyNightMode() async {
+    final native = _player.platform;
+    if (native is! NativePlayer) return;
+    await _nativeCommand(native, ['af', 'remove', _nightModeLabel]);
+    if (_nightModeOn(_prefs)) {
+      await _nativeCommand(native, ['af', 'add', nightModeFilter]);
+    }
+  }
+
   Future<void> _drainAudioPassthroughApplyQueue() async {
     try {
       do {
@@ -2207,6 +2283,7 @@ class MediaKitPlayerBackend extends PlayerBackend
         UserPreferences.customMpvConfUnsafeAdvanced,
       );
 
+      var replacedAf = false;
       for (final parsed in parsedEntries) {
         final key = parsed.$1;
         final value = parsed.$2;
@@ -2225,7 +2302,11 @@ class MediaKitPlayerBackend extends PlayerBackend
         try {
           await _nativeSetProperty(native, key, value);
         } catch (_) {}
+        if (key == 'af') replacedAf = true;
       }
+      // An af line replaces the whole chain, so the night filter has to go
+      // back on.
+      if (replacedAf) await _applyNightMode();
 
       _appliedCustomMpvConfPath = path;
       _appliedCustomMpvConfMtime = stat.modified;
@@ -2852,9 +2933,11 @@ class MediaKitPlayerBackend extends PlayerBackend
     final generation = _playbackGeneration;
     // A change still queued when another source opens was meant for the old
     // one, and its ordinal would pick a track in the new one.
-    return _queueAudioTrackChange(() async {
+    final change = _queueAudioTrackChange(() async {
       if (_ownsPlayback(generation)) await _setAudioTrack(mpvTrackId);
     });
+    unawaited(_applyLinuxPassthroughFallbackIfNeeded(generation));
+    return change;
   }
 
   Future<void> _setAudioTrack(int mpvTrackId) async {

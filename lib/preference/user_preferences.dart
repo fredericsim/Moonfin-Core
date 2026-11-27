@@ -163,6 +163,7 @@ class UserPreferences extends ChangeNotifier {
     _seedClockFormatFromSystem();
     _migrateScreensaverPreferences();
     _migrateSystemImePreference();
+    seedHideDescriptionTogglesFromLegacy();
   }
 
   // Carry over the pre-rename jellyseerr* preference keys to their seerr* names.
@@ -347,6 +348,20 @@ class UserPreferences extends ChangeNotifier {
     if (_store.get(legacy)) _store.set(style, KeyboardStyle.native);
   }
 
+  /// Carries the old single switch into the Movie and Episode toggles that
+  /// replaced it, unless they were already set.
+  void seedHideDescriptionTogglesFromLegacy() {
+    if (!get(hideDetailsMediaDescription)) return;
+    for (final pref in [
+      hideDetailsMediaDescriptionMovie,
+      hideDetailsMediaDescriptionEpisode,
+    ]) {
+      if (!containsPreference(pref)) {
+        _store.set(getEffectivePreference(pref), true);
+      }
+    }
+  }
+
   // On first run, default the 12h/24h clock to the device's locale so users in
   // 24h regions aren't stuck on 12h. Runs once; an explicit choice is kept.
   void _seedClockFormatFromSystem() {
@@ -503,7 +518,6 @@ class UserPreferences extends ChangeNotifier {
     'imdb_most_popular_tv_shows_enabled',
     'imdb_top_250_movies_enabled',
     'imdb_top_250_tv_shows_enabled',
-    'imdb_top_english_movies_enabled',
     'live_tv_channel_sort_by',
     'live_tv_last_channel_id',
     'music_playback_time_display',
@@ -602,8 +616,14 @@ class UserPreferences extends ChangeNotifier {
     'pref_music_library_style',
     'pref_detail_expanded_tabs',
     'pref_detail_show_technical_details',
+    'pref_detail_show_full_date',
     'pref_detail_trailers_external',
     'pref_hide_details_media_description',
+    'pref_hide_details_media_description_movie',
+    'pref_hide_details_media_description_show',
+    'pref_hide_details_media_description_season',
+    'pref_hide_details_media_description_episode',
+    'pref_hide_details_media_description_box_set',
     'pref_detail_use_series_thumbnails',
     'pref_hide_home_media_description',
     'pref_hide_home_watch_progress',
@@ -804,6 +824,7 @@ class UserPreferences extends ChangeNotifier {
     'showRatingBadges',
     'enableEpisodeRatings',
     'pref_personal_rating_style',
+    'pref_personal_rating_intervals',
     'tmdbApiKey',
     'seerrBlockNsfw',
     'seerrShowMissingCollectionItems',
@@ -1952,6 +1973,13 @@ class UserPreferences extends ChangeNotifier {
     defaultValue: false,
   );
 
+  /// When on, details pages display the full release or air date instead of
+  /// only the production year. Stored per server like [detailScreenStyle].
+  static final detailShowFullDate = Preference(
+    key: 'pref_detail_show_full_date',
+    defaultValue: false,
+  );
+
   /// When on, the details screen hands remote trailers to the system, the
   /// YouTube app on TV or the browser elsewhere, instead of the in-app
   /// player. Local trailers are server files only this app can stream, so
@@ -1964,6 +1992,36 @@ class UserPreferences extends ChangeNotifier {
   /// When on, media description paragraph on the details page is hidden.
   static final hideDetailsMediaDescription = Preference(
     key: 'pref_hide_details_media_description',
+    defaultValue: false,
+  );
+
+  /// Hides the description on movie detail pages.
+  static final hideDetailsMediaDescriptionMovie = Preference(
+    key: 'pref_hide_details_media_description_movie',
+    defaultValue: false,
+  );
+
+  /// Hides the description on show detail pages.
+  static final hideDetailsMediaDescriptionShow = Preference(
+    key: 'pref_hide_details_media_description_show',
+    defaultValue: false,
+  );
+
+  /// Hides the description on season detail pages.
+  static final hideDetailsMediaDescriptionSeason = Preference(
+    key: 'pref_hide_details_media_description_season',
+    defaultValue: false,
+  );
+
+  /// Hides the description on episode detail pages and in episode lists.
+  static final hideDetailsMediaDescriptionEpisode = Preference(
+    key: 'pref_hide_details_media_description_episode',
+    defaultValue: false,
+  );
+
+  /// Hides the description on collection detail pages.
+  static final hideDetailsMediaDescriptionBoxSet = Preference(
+    key: 'pref_hide_details_media_description_box_set',
     defaultValue: false,
   );
 
@@ -2028,9 +2086,14 @@ class UserPreferences extends ChangeNotifier {
       get(kidsModeEnabled) ? false : get(detailTrailersExternal);
 
   /// True means hidden. The preference is named for hiding, so Kids Mode
-  /// forces it on rather than off to leave the description out.
-  bool get effectiveHideDetailsMediaDescription =>
-      get(kidsModeEnabled) ? true : get(hideDetailsMediaDescription);
+  /// forces it on rather than off to leave the description out. Otherwise it
+  /// follows the Episode toggle, or the old single switch while that toggle
+  /// was never set.
+  bool get effectiveHideDetailsMediaDescription => get(kidsModeEnabled)
+      ? true
+      : (containsPreference(hideDetailsMediaDescriptionEpisode)
+            ? get(hideDetailsMediaDescriptionEpisode)
+            : get(hideDetailsMediaDescription));
 
   bool get effectiveDetailUseSeriesThumbnails =>
       get(kidsModeEnabled) ? false : get(detailUseSeriesThumbnails);
@@ -2560,6 +2623,26 @@ class UserPreferences extends ChangeNotifier {
     defaultValue: false,
   );
 
+  static final upscaleLowResolutionVideo = Preference(
+    key: 'upscale_low_resolution_video',
+    defaultValue: false,
+  );
+
+  static final upscaleFullHdVideo = Preference(
+    key: 'upscale_full_hd_video',
+    defaultValue: false,
+  );
+
+  static final upscaleAnimationLineArt = Preference(
+    key: 'upscale_animation_line_art',
+    defaultValue: false,
+  );
+
+  static final hdrToneMapPeakNits = Preference(
+    key: 'hdr_tone_map_peak_nits',
+    defaultValue: 'off',
+  );
+
   static final media3SkipSilence = Preference(
     key: 'media3_skip_silence',
     defaultValue: false,
@@ -2739,6 +2822,12 @@ class UserPreferences extends ChangeNotifier {
     values: AudioPassthroughOutput.values,
   );
 
+  /// Linux only: decode a passthrough track when the output plays it silently.
+  static final passthroughSilentFallback = Preference(
+    key: 'pref_passthrough_silent_fallback',
+    defaultValue: true,
+  );
+
   static final downmixToStereo = Preference(
     key: 'pref_downmix_to_stereo',
     defaultValue: false,
@@ -2785,6 +2874,16 @@ class UserPreferences extends ChangeNotifier {
   static final audioNightMode = Preference(
     key: 'audio_night_mode',
     defaultValue: false,
+  );
+
+  static final binauralHeadphones = Preference(
+    key: 'binaural_headphones',
+    defaultValue: false,
+  );
+
+  static final loudnessTargetLufs = Preference(
+    key: 'loudness_target_lufs',
+    defaultValue: 'off',
   );
 
   static final customMpvConfEnabled = Preference(
@@ -3150,6 +3249,13 @@ class UserPreferences extends ChangeNotifier {
     defaultValue: true,
   );
 
+  /// Kept on the device rather than synced, since it tunes the local touch
+  /// screen.
+  static final playerSwipeSeek = Preference(
+    key: 'pref_player_swipe_seek',
+    defaultValue: true,
+  );
+
   /// Where brightness and volume swipe gesture indicators appear relative to the swipe side.
   /// Belongs to the device, since it tunes the local touch screen, so it isn't synced.
   static final gestureIndicatorPlacement = EnumPreference(
@@ -3486,6 +3592,11 @@ class UserPreferences extends ChangeNotifier {
     defaultValue: PersonalRatingStyle.thumbs,
   );
 
+  static final personalRatingIntervals = Preference<int>(
+    key: 'pref_personal_rating_intervals',
+    defaultValue: 11,
+  );
+
   static final tmdbApiKey = Preference(key: 'tmdbApiKey', defaultValue: '');
 
   static final showRatingLabels = Preference(
@@ -3635,11 +3746,6 @@ class UserPreferences extends ChangeNotifier {
 
   static final imdbLowestRatedMoviesEnabled = Preference(
     key: 'imdb_lowest_rated_movies_enabled',
-    defaultValue: false,
-  );
-
-  static final imdbTopEnglishMoviesEnabled = Preference(
-    key: 'imdb_top_english_movies_enabled',
     defaultValue: false,
   );
 
@@ -4117,6 +4223,16 @@ class UserPreferences extends ChangeNotifier {
   /// next to the Plex server (`plexMoonbaseDefault`).
   static Preference<String> moonbaseUrlForServer(String serverId) =>
       Preference(key: 'pref_moonbase_url_$serverId', defaultValue: '');
+
+  /// A Plex user's Library Visibility and Library Order, as JSON, since Plex
+  /// has nowhere to keep them. Empty until the user saves one.
+  static Preference<String> plexUserConfiguration(
+    String serverId,
+    String userId,
+  ) => Preference(
+    key: 'pref_plex_user_configuration_${serverId}_$userId',
+    defaultValue: '',
+  );
 
   static Preference<bool> pluginSyncInitializedForServer(String serverKey) =>
       Preference(
