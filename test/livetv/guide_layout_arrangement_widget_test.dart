@@ -80,6 +80,7 @@ void main() {
     GetIt.instance.registerSingleton<PlaybackManager>(playback);
 
     client = _MockMediaServerClient();
+    when(() => client.baseUrl).thenReturn('https://guide.test');
     liveTvApi = _MockLiveTvApi();
     imageApi = _MockImageApi();
     when(() => client.liveTvApi).thenReturn(liveTvApi);
