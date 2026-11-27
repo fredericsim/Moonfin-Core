@@ -169,6 +169,7 @@ void main() {
     GetIt.instance.registerSingleton<PlaybackManager>(playback);
 
     client = _MockMediaServerClient();
+    when(() => client.baseUrl).thenReturn('https://guide.test');
     liveTvApi = _MockLiveTvApi();
     when(() => client.liveTvApi).thenReturn(liveTvApi);
     when(() => client.serverType).thenReturn(ServerType.jellyfin);
