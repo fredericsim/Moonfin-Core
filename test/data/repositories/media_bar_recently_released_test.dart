@@ -142,6 +142,7 @@ void main() {
       parentId: any(named: 'parentId'),
       includeItemTypes: const ['Movie'],
       recursive: true,
+      collapseBoxSetItems: false,
       sortBy: 'PremiereDate',
       sortOrder: 'Descending',
       minPremiereDate: any(named: 'minPremiereDate'),
