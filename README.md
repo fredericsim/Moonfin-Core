@@ -175,28 +175,25 @@ configuration takes precedence. The web bundle workflow exposes the same
 choice as `show_loading_logo` (off by default). Existing loading-animation
 preferences are kept and the logo remains available when the flag is enabled.
 
-On a Jellyfin host with Docker, update a Moonfin checkout and deploy the newest
-versioned Moonfin web release with:
+NAS deployment is owned by [Fredflix](https://github.com/fredericsim/fredflix),
+which downloads this fork's published bundle. After the release is published,
+run the tracked wrapper from the persistent Fredflix checkout on the NAS:
 
 ```bash
-git pull --ff-only origin main
-MOONFIN_PUBLIC_MANIFEST_URL=https://jellyfin.example.com/Moonfin/Web/build-manifest.json \
-./scripts/deploy-moonbase-web.sh
+cd /volume1/docker/fredflix
+./deploy-nas.sh
 ```
 
-The deployer selects the newest published `moonfin-web-<commit>` release from
-`fredericsim/Moonfin-Core` instead of relying on the repository-wide latest
-release, verifies its checksum and both copies of its plugin-mode metadata,
-discovers Moonbase's active web directory, retains the previous frontend as a
-timestamped backup, restarts Jellyfin, and confirms the public build manifest.
-`MOONFIN_PUBLIC_MANIFEST_URL` is required. Other host-specific values can be
-overridden when needed:
+The wrapper updates Fredflix from `origin/main` and uses its configured Jellyfin
+container and deployment checks. Use `./deploy-nas.sh --dry-run` to validate a
+release first. No Moonfin source checkout, Flutter installation, downloaded shell
+script, or manual edit on the NAS is needed.
 
-```bash
-JELLYFIN_CONTAINER=my-jellyfin \
-MOONFIN_PUBLIC_MANIFEST_URL=https://jellyfin.example.com/Moonfin/Web/build-manifest.json \
-./scripts/deploy-moonbase-web.sh
-```
+The old `scripts/deploy-moonbase-web.sh` has been retired and exits without
+changing files. Do not download and run old copies from previous releases.
+Host settings and recovery procedures live in the
+[homelab Jellyfin runbook](https://github.com/fredericsim/homelab/tree/main/ugreen-nas/jellyfin);
+Fredflix's README documents release selection, backups, and rollback.
 
 Click-by-click steps for every platform are on [Installation](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Installation), and [Getting Started](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Getting-Started) covers connecting to your server for the first time.
 
